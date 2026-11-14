@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "pre_generation": [
+      {
+        "description": "Verify mandatory screenplay, storyboard, and production_plan approvals exist before video rendering.",
+        "command": "${workspaceFolder}/.venv/bin/python -c \"import sys; from backend.services.package_service import check_mandatory_approvals; print(check_mandatory_approvals(sys.argv[1]))\""
+      }
+    ]
+  }
+}

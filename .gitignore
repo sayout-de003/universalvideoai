@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+studio.db*
+.env
+integrations/
+projects/
+media_library/
+model_cache/
+desktop/node_modules/
+desktop/dist/
+*.log
+.DS_Store

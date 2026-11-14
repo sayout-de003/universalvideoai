@@ -1,0 +1,50 @@
+# Video Script Generation & Production Audit
+
+**Date:** 2026-11-14  
+**Scope:** Full audit of `backend/`, `desktop/src/`, `backend/integrations/`, `AGENTS.md`, `.agents/skills/`, and `tests/test_studio_e2e.py` before redesigning the Universal AI Video Studio around the guided pre-production → review → approval → generation → QA workflow.
+
+---
+
+## 1. Reproduction of Current Script-Generation & Video Failure
+
+**Command executed:**
+```bash
+PYTHONPATH=. .venv/bin/python -c "import json; from backend.models import ProjectCreateRequest; from backend.orchestration.director import create_project; d = create_project(ProjectCreateRequest(prompt='I want to create a cinematic documentary about the rise of electric vehicles in India.')); ..."
+```
+
+**Observed output (`proj_f9f79196cd`):**
+- `category`: `"documentary"`, `target_duration_sec`: `30.0`, `render_engine`: `"ffmpeg"`
+- `title`: `"I want to create a cinematic documentary"` (broken 7-word slice of the prompt)
+- **Scene 1 narration**: `"Welcome to I want to create a cinematic documentary. In this opening chapter, we explore the core story behind I want to create a cinematic documentary about the rise of electric vehicles in India.."`
+- **Scene 2 narration**: `"Chapter 1, part 2: advancing the narrative with clear visual storytelling and pacing."`
+- **Scene 3 narration**: `"As this production concludes, the key themes of I want to create a cinematic documentary come together into a lasting takeaway."`
+- **Scene prompts**: `documentary style visual for I want to create a cinematic documentary: <truncated narration>`
+
+---
+
+## 2. Detailed Issue Ledger
+
+| ID | Severity | File & Function | Root Cause | User Impact | Recommended Correction | Test Required |
+|---|---|---|---|---|---|---|
+| AUD-01 | **Critical** | `backend/orchestration/director.py` — `_generate_scene_narration()`, `_plan_hierarchy_and_bible()` | Uses 3 hardcoded boilerplate template strings (`"Welcome to..."`, `"Chapter X, part Y: advancing the narrative..."`, `"As this production concludes..."`) regardless of format, audience, or facts. | Every generated script reads like generic chatbot filler with zero domain substance, narrative arc, or cinematic specificity. | Replace with format-specific specialist screenwriters (25 formats / 10 specialist writers), story architect, script doctor, and LLM/structured-reasoning integration with format rubrics. | Scenario A–D screenwriting & evaluator tests verifying format-specific structure and zero boilerplate. |
+| AUD-02 | **Critical** | `backend/orchestration/director.py` — `create_project()`, `classify_brief()` | Immediately creates project and assumes `30.0s` duration and 8 coarse categories without conversational intake or confirming video type and duration. | Users are never asked what type of video or duration they want; a 30-second Reel and a 10-minute documentary use the same 3-scene template. | Add Stage 1–2 Creative Brief Analyst & Format Director intake service that asks for video type + duration first, then adaptive follow-ups (platform, audience, tone, references). | Scenario A & B intake tests confirming conversational clarification before planning. |
+| AUD-03 | **Critical** | `backend/orchestration/director.py` — `run_production()`, `backend/main.py` | No approval gate between pre-production artifacts and video rendering; `POST /api/projects/{id}/run` can start immediately without screenplay/storyboard/plan approval. | Expensive/slow generation runs on unreviewed, unapproved scripts. | Implement versioned Production Package (28 artifacts), Approval Service with artifact version/hash locks, and block `run_production` until mandatory approvals exist. | Approval gate contract test verifying generation is rejected until screenplay, storyboard, and production plan are approved. |
+| AUD-04 | **Critical** | `backend/orchestration/renderer.py` — `render_scene_clip()`, `_render_2d_character_frames()`, `_render_threejs_3d_frames()` | Uses `ImageFont.load_default()` (10px bitmap font), a stick figure on a rectangle, a wireframe cube, or a flat box + 6px moving bar; ignores `narration_segment`, `visual_description`, and shot framing. | Output videos look like low-effort debug placeholders instead of watchable productions. | Upgrade renderer with TrueType typography, atmospheric multi-stop gradients, topic/category-aware layered motion graphics, shaded 3D geometry, stylized characters, `xfade` transitions, and burned-in kinetic captions; wire OpenMontage provider adapters when API keys exist. | Visual & playback QA tests verifying resolution, non-empty frames, caption legibility, and shot-spec adherence. |
+| AUD-05 | **High** | Missing subsystem | No Research Service, source registry, or fact-checking ledger. | Factual/documentary/commercial videos have no verifiable sources, dates, or claim validation. | Add Research Director, Web Research Agent, and Fact Checker (`PASS`/`QUALIFY`/`REWRITE`/`REJECT`) producing `research_dossier.md`, `source_registry.json`, `fact_check_ledger.json`, `research_timeline.json`. | Scenario B documentary research + fact-check rejection test. |
+| AUD-06 | **High** | Missing subsystem | No Reference Intelligence Engine or upload purpose classification (`reference_analysis.json`, `reference_style_guide.md`, `asset_registry.json`). | Users cannot upload reference videos/images/brand assets with declared intent (character, location, style, footage) and have them drive storyboarding. | Add `/api/projects/{id}/assets/upload` + FFprobe/Pillow/OpenWhispr multimodal reference analyzer extracting shot boundaries, palette, lighting, rhythm, and audio profile. | Scenario E reference upload & style-guide application test. |
+| AUD-07 | **High** | `backend/orchestration/director.py` — `_plan_hierarchy_and_bible()` | Fixed `scene_dur = min(12.0, target_dur / total_scenes)` with no speech-rate WPM calculation, silent beats, or runtime tolerance validation. | Scripts do not match requested runtime (e.g. 60s vs 30s) or pad/truncate awkwardly. | Add Runtime Intelligence Engine computing spoken duration from configurable WPM + pauses + transitions + montage, enforcing format tolerance. | Runtime validation unit & scenario tests (60s target within tolerance). |
+| AUD-08 | **High** | Missing subsystem | No independent Screenplay Quality Engine (`screenplay_evaluation`). | Weak or incomplete scripts pass straight to production. | Implement format-weighted Screenplay Quality Engine with hard rejection conditions and revision loop via Script Doctor & Audience Retention Editor. | Screenplay evaluator test rejecting incomplete/off-runtime/unverified scripts. |
+| AUD-09 | **High** | `backend/orchestration/director.py`, `backend/db.py` | Only 1 generic `"Lead Subject"` character and `"Primary Narrator"` row; no canonical location/prop continuity bible or post-generation continuity check. | Character appearance, wardrobe, and locations drift across scenes. | Add Character & World Designer + Continuity Supervisor checking generated shots against canonical character/location/prop bibles. | Scenario C & F continuity check & selective invalidation tests. |
+| AUD-10 | **Medium** | `backend/orchestration/director.py` — `regenerate_single_scene()` | Tracks `manual_edited` on `timeline_clips` only; lacks full dependency graph across dialogue, voice, music, character design, and subtitles. | Changing a character or dialogue line does not accurately invalidate/recompute only dependent assets. | Implement artifact versioning & dependency graph tracking (`Scene`, `Shot`, `Character`, `Audio`, `Subtitle`). | Scenario F selective invalidation test. |
+| AUD-11 | **Medium** | `backend/orchestration/audio_studio.py` — `generate_music_bed()` | Raw un-filtered `aevalsrc` sine-wave chords (`110Hz`, `164Hz`, etc.) sound harsh/synthetic. | Background music sounds like an organ drone. | Apply warm lowpass filtering, envelope shaping, and subtle stereo echo/ambience. | Audio QA test verifying valid RMS/peak levels and zero clipping. |
+| AUD-12 | **Medium** | `plugins/universal-video-studio/` (missing), `.agents/skills/` (single skill) | Only one generic skill exists in `.agents/skills/universal-video-studio/SKILL.md`; no structured `plugins/universal-video-studio/` with `plugin.json`, `mcp_config.json`, `hooks.json`, 19 skills, or MCP server. | Antigravity integration is just a single markdown instruction rather than a native plugin + MCP/API bridge. | Build `plugins/universal-video-studio/` with `plugin.json`, `mcp_config.json`, `hooks.json`, agent definitions, 19 skills, and an actual stdio/HTTP MCP server (`backend/mcp_server.py`). | MCP server contract test + plugin manifest validation test. |
+| AUD-13 | **Medium** | `desktop/src/App.tsx`, UI components | UI only has 7 basic tabs (`Dashboard`, `Create Studio`, `Storyboard`, `Timeline`, `Audio`, `Backlot`, `Export`); lacks `Creative Studio` (guided intake), `Research`, `Script Room` (rich editor + diffs + comments + evaluator), `Characters & Assets`, `Render Queue`, and approval locks. | Users cannot review/edit the 28-artifact production package or approve stages before generation. | Redesign UI navigation around the 11 studio workspaces with clear separation of AI suggestions, user-approved content, generated content, and verified content. | Frontend TypeScript & Vite build + API integration tests. |
+
+---
+
+## 3. Existing Reusable Components (Verified)
+- `backend/integrations/openmontage_adapter.py`: Discovers **164 OpenMontage tools** and **13 pipelines** cleanly via `tools.tool_registry.registry`.
+- `backend/integrations/openwhispr_adapter.py`: Connects to OpenWhispr `cliBridge` (`~/.openwhispr/cli-bridge.json`) and local `whisper-cpp`/`whisper` fallback + Voice-to-Action parser.
+- `backend/orchestration/audio_studio.py`: Working macOS `say` TTS, `ffmpeg` sidechain ducking (`mix_audio_stems`), and `.srt`/`.vtt` subtitle generation.
+- `backend/orchestration/qa.py`: Working FFprobe/FFmpeg QA (`blackdetect`, `silencedetect`, `ebur128`, aspect/fps/duration checks).
+- `desktop/`: Working React + Vite + Tailwind + Electron shell.

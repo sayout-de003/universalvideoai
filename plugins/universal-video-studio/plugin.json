@@ -1,0 +1,10 @@
+{
+  "name": "universal-video-studio",
+  "version": "2.0.0",
+  "description": "Professional AI Film Production Studio plugin for Google Antigravity — guided creative intake, research, 25-format screenwriting, storyboarding, approval gates, rendering, and QA.",
+  "mcpServers": "./mcp_config.json",
+  "hooks": "./hooks.json",
+  "skillsDir": "./skills",
+  "agentsDir": "./agents",
+  "rulesDir": "./rules"
+}
