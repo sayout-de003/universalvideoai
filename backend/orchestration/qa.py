@@ -16,6 +16,7 @@ from backend.models import QualityCheckItem, utc_now
 def run_qa_verification(
     project_id: str, video_path: Path, expected_aspect_ratio: str = "16:9", expected_fps: int = 30,
     subtitle_paths: list[Path] | None = None, scene_count_expected: int = 0, scene_count_rendered: int = 0,
+    expected_duration_sec: float = 0.0,
 ) -> dict[str, Any]:
     checks: list[QualityCheckItem] = []
     if not video_path.exists():
@@ -48,7 +49,7 @@ def run_qa_verification(
         proc = subprocess.run(["ffmpeg", "-i", str(video_path), "-vf", "blackdetect=d=1.0:pic_th=0.99:pix_th=0.05", "-an", "-f", "null", "-"], capture_output=True, text=True, timeout=45)
         black_hits = re.findall(r"black_duration:([0-9.]+)", proc.stderr or "")
         total_black = sum(float(x) for x in black_hits)
-        checks.append(QualityCheckItem(name="black_frame_check", category="visual", passed=total_black < max(2.0, duration_sec * 0.25), details=f"Detected {len(black_hits)} black segment(s), total={total_black:.2f}s"))
+        checks.append(QualityCheckItem(name="black_frame_check", category="visual", passed=total_black < max(1.0, duration_sec * 0.12), details=f"Detected {len(black_hits)} black segment(s), total={total_black:.2f}s"))
     except Exception as exc:
         checks.append(QualityCheckItem(name="black_frame_check", category="visual", passed=False, details=str(exc)))
 
@@ -65,6 +66,15 @@ def run_qa_verification(
 
     if scene_count_expected > 0:
         checks.append(QualityCheckItem(name="scene_completeness", category="visual", passed=scene_count_rendered >= scene_count_expected, details=f"Rendered {scene_count_rendered}/{scene_count_expected} scenes"))
+
+    if expected_duration_sec > 1.0:
+        err = abs(duration_sec - expected_duration_sec) / expected_duration_sec
+        checks.append(QualityCheckItem(
+            name="duration_matches_edit",
+            category="visual",
+            passed=err <= 0.25,
+            details=f"Program {duration_sec:.1f}s vs edit {expected_duration_sec:.1f}s",
+        ))
 
     if subtitle_paths:
         for sp in subtitle_paths:

@@ -101,7 +101,8 @@ def test_e2e_3_and_4_documentary_and_educational_chapters(client: TestClient):
         assert edu["project"]["category"] == "educational"
         assert edu["project"]["target_duration_sec"] == 900.0
         assert len(edu["chapters"]) == 4
-        assert len(edu["scenes"]) == 12
+        assert len(edu["scenes"]) >= 36
+        assert max(float(s["duration_sec"]) for s in edu["scenes"]) < 40
     finally:
         client.delete(f"/api/projects/{pid_edu}")
 

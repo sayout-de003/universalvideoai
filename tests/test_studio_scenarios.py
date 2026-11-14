@@ -15,6 +15,28 @@ from backend.services.package_service import REQUIRED_28_ARTIFACTS
 from backend.services.script_evaluator import evaluate_screenplay
 
 
+def test_scene_plan_and_picture_prompt_follow_the_script():
+    from backend.services.screenwriting_service import develop_and_write_screenplay, plan_scene_count
+    from backend.services.shot_generation_service import scene_picture_prompt
+
+    assert plan_scene_count(900, 5.5) >= 36
+    assert plan_scene_count(12, 4.0) == 3
+    pkg = develop_and_write_screenplay(
+        "Create a 15-minute educational course about machine learning",
+        "educational_videos",
+        {"target_duration_sec": 900},
+        [],
+    )
+    assert len(pkg["scenes"]) >= 36
+    assert len({s["narration_segment"] for s in pkg["scenes"]}) >= 12
+    prompt = scene_picture_prompt(
+        {"title": "Scene 1: Hook", "generation_prompt": "Close view of a copper coil on a lab bench", "visual_description": "unused"},
+        project_topic="Electromagnetism",
+    )
+    assert "copper coil" in prompt
+    assert "Scene 1" not in prompt
+
+
 def test_scenario_guided_intake_asks_type_and_duration_first():
     with TestClient(app) as client:
         r1 = client.post("/api/intake/start", json={"prompt": "I want to create a cinematic documentary about the rise of electric vehicles in India."})

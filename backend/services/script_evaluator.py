@@ -33,6 +33,10 @@ def evaluate_screenplay(
     if not scenes or len(scenes) < 2:
         hard_rejections.append("Incomplete screenplay: fewer than 2 scenes generated.")
 
+    narrations = [(sc.get("narration_segment") or "").strip() for sc in scenes]
+    if len(narrations) >= 4 and len(set(narrations)) < max(3, len(narrations) // 2):
+        hard_rejections.append("Too many scenes repeat the same narration.")
+
     if not runtime["within_tolerance"]:
         hard_rejections.append(
             f"Runtime outside tolerance: estimated {runtime['estimated_total_sec']}s vs target {runtime['target_duration_sec']}s."

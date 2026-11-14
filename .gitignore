@@ -4,7 +4,7 @@ __pycache__/
 .pytest_cache/
 studio.db*
 .env
-integrations/
+/integrations/
 projects/
 media_library/
 model_cache/

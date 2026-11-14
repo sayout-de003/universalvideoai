@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -42,7 +43,14 @@ def _extract_subject(prompt: str) -> str:
         s,
         flags=re.IGNORECASE,
     )
-    s = s.strip().rstrip(".!?")
+    s = re.sub(r"\b\d+\s*-\s*(?:second|sec|minute|min|hour|hr)s?\b", " ", s, flags=re.IGNORECASE)
+    s = re.sub(
+        r"\b(?:faceless|youtube|shorts?|reels?|explaining|explain|how|with|word-by-word|captions?|about)\b",
+        " ",
+        s,
+        flags=re.IGNORECASE,
+    )
+    s = re.sub(r"\s+", " ", s).strip().rstrip(".!?")
     return s if len(s) >= 3 else prompt.strip().rstrip(".!?")
 
 
@@ -127,6 +135,19 @@ def _try_llm_screenplay(
     return None
 
 
+# shortcut: 48-shot cap matches this host's sequential render budget; raise it when shots render in parallel.
+_SHOT_CAP = 48
+
+
+def plan_scene_count(target_dur: float, shot_density_sec: float) -> int:
+    """Plan enough shots that a scene stays near the format's shot length, never a handful of multi-minute slabs."""
+    density = max(4.0, float(shot_density_sec or 8.0))
+    count = max(3, int(round(max(5.0, target_dur) / density)))
+    if count < _SHOT_CAP and target_dur / count > 12.0:
+        count = min(_SHOT_CAP, int(math.ceil(target_dur / 12.0)))
+    return min(_SHOT_CAP, count)
+
+
 def _build_specialist_scenes_offline(
     subject: str,
     fmt_spec: dict[str, Any],
@@ -138,6 +159,8 @@ def _build_specialist_scenes_offline(
     """Deterministic, format-authentic, research-grounded scene writer (zero boilerplate)."""
     beats = fmt_spec["structure"]
     wtype = fmt_spec["writer_type"]
+    if "animation" in fmt_spec["label"].lower():
+        wtype = "animation_piece"
     verified_facts = [
         c["claim_text"]
         for c in research_claims
@@ -148,7 +171,7 @@ def _build_specialist_scenes_offline(
 
     scenes: list[dict[str, Any]] = []
     for i in range(num_scenes):
-        beat = beats[min(i, len(beats) - 1)]
+        beat = beats[i % len(beats)]
         fact_line = verified_facts[i % len(verified_facts)] if verified_facts else ""
 
         if wtype == "short_form_social":
@@ -194,6 +217,49 @@ def _build_specialist_scenes_offline(
                 narr = f"With {subject}, every step becomes visible, verifiable, and faster in real-world operation."
                 vis = f"Focused macro and UI/workflow demonstration of {subject} in action, clean accent highlights and smooth tracking shot."
                 shot, cam, light = "medium", "eye_level", "bright_studio"
+        elif wtype == "youtube_longform":
+            if i == 0:
+                narr = f"By the end of this, you will see exactly how {subject} works, and where the usual explanation stops. {fact_line}".strip()
+                vis = f"Open on a clear hero frame of {subject}, title held for a beat, then a motivated push-in toward the detail that carries the chapter."
+                shot, cam, light = "wide", "eye_level", "clean_studio"
+            elif i == num_scenes - 1:
+                narr = f"That is the through-line of {subject}: the promise from the opening, now tied to a specific takeaway."
+                vis = f"Return to the opening frame of {subject}, same grade and wardrobe, with the takeaway set in large type beside the subject."
+                shot, cam, light = "medium_wide", "eye_level", "balanced_natural"
+            else:
+                narr = fact_line or f"Chapter beat: {beat}. Here is the next concrete piece of {subject}, shown before it is named."
+                vis = f"B-roll and a diagram of {subject} for '{beat}', same palette as the opening, lateral move across the evidence."
+                shot, cam, light = "medium", "eye_level", "bright_studio"
+        elif wtype == "music_video":
+            if i == 0:
+                narr = f"{subject}."
+                vis = f"Performance-wide of the artist in the world of {subject}, hard front light, a move that lands on the first downbeat."
+                shot, cam, light = "wide", "low_angle", "high_contrast_neon"
+            elif i == num_scenes - 1:
+                narr = f"{subject}."
+                vis = f"Final pose of the same performer in {subject}, same costume, light blooming out as the last hit lands."
+                shot, cam, light = "medium_wide", "eye_level", "high_contrast_neon"
+            else:
+                narr = f"{beat}."
+                vis = f"Cut on the beat: {beat} inside {subject}, same costume and set, camera move changes while the wardrobe does not."
+                shot, cam, light = "medium", "eye_level", "dramatic_side_key"
+        elif wtype == "existing_footage":
+            narr = fact_line or f"Use the supplied footage for {beat}: keep the original action of {subject} and cut only for clarity."
+            vis = f"Edit the user's clip of {subject} for '{beat}'. Match the source framing. Do not replace it with a generated scene when the file is present."
+            shot, cam, light = "medium", "eye_level", "match_source"
+        elif wtype == "animation_piece":
+            if i == 0:
+                narr = f"This is {subject}."
+                vis = f"Character intro of {subject} in a held pose, full silhouette readable, flat consistent colors, a small anticipatory settle before the action."
+                shot, cam, light = "medium_wide", "eye_level", "clean_toon_key"
+            elif i == num_scenes - 1:
+                narr = f"And that is how {subject} lands."
+                vis = f"Payoff pose of the same character design for {subject}, same colors and proportions, held for the button."
+                shot, cam, light = "medium", "eye_level", "clean_toon_key"
+            else:
+                narr = fact_line or f"{subject} — {beat.lower()}."
+                vis = f"The same character performs '{beat}' in {subject}. One action, same model sheet, background holds while the pose changes."
+                shot, cam, light = "medium", "eye_level", "clean_toon_key"
         elif wtype == "fiction_short_film":
             if i == 0:
                 narr = f"Before dawn breaks over {subject}, a single choice sets an irreversible chain of events in motion."
@@ -222,6 +288,8 @@ def _build_specialist_scenes_offline(
                 shot, cam, light = "medium", "eye_level", "bright_studio"
 
         narr = _trim_to_word_budget(narr, max(8, words_per_scene))
+        narr = f"{narr} ({beat}, {i + 1}.)".replace("..", ".")
+        vis = f"{vis} Continuity: {subject} keeps the same identity, wardrobe, and grade. Shot {i + 1}, {beat}."
         scenes.append({
             "title": f"{beat}",
             "purpose": f"Deliver '{beat}' for {fmt_spec['label']}",
@@ -252,17 +320,7 @@ def develop_and_write_screenplay(
     subject = _extract_subject(prompt)
     target_dur = float(brief.get("target_duration_sec") or fmt_spec["default_duration_sec"])
 
-    # Determine scene count proportionally from target duration & format shot density
-    if target_dur <= 20:
-        num_scenes = 3
-    elif target_dur <= 75:
-        num_scenes = 4
-    elif target_dur <= 240:
-        num_scenes = 6
-    elif target_dur < 900:
-        num_scenes = 8
-    else:
-        num_scenes = 12
+    num_scenes = plan_scene_count(target_dur, float(fmt_spec.get("shot_density_sec") or 8.0))
 
     per_scene_sec = max(2.5, target_dur / num_scenes)
     spoken_budget_sec = max(1.5, per_scene_sec - 0.8)

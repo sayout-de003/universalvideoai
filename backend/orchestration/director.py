@@ -211,7 +211,7 @@ def _plan_hierarchy_and_bible(
         conn.execute(
             """INSERT INTO characters (id, project_id, name, role, visual_description, facial_features, body_proportions, clothing, personality, voice_id, voice_provider)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (char_id, project_id, "Lead Subject", "protagonist", f"Consistent lead visual subject for {title}", "Expressive eyes, clear silhouette", "Balanced proportions", "Format-appropriate attire", "Engaging and memorable", "character_1", "local"),
+            (char_id, project_id, "Lead Subject", "protagonist", f"Locked identity for {script_pkg['subject']}: same face, silhouette, and wardrobe in every shot of {title}", "Expressive eyes, clear silhouette", "Balanced proportions", "One costume for the whole picture", "Engaging and memorable", "character_1", "local"),
         )
         conn.execute(
             """INSERT INTO locations (id, project_id, name, architecture, layout, time_of_day, lighting, weather, color_palette)
@@ -327,6 +327,14 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
     ws = Path(project["workspace_dir"])
     chapters, scenes, speakers = detail["chapters"], detail["scenes"], detail["speakers"]
     narrator_voice = speakers[0]["voice_id"] if speakers else "default"
+    from backend.services.screenwriting_service import _extract_subject
+    shots_by_scene = {sh["scene_id"]: sh for sh in detail.get("shots") or []}
+    project_topic = _extract_subject(project["prompt"]) or project["title"]
+    footage = [
+        r["file_path"] for r in (detail.get("reference_assets") or [])
+        if r.get("asset_type") == "video" and r.get("intended_role") == "existing_footage" and Path(r.get("file_path") or "").is_file()
+    ]
+    used_hashes: set[str] = set()
 
     with get_conn() as conn:
         conn.execute("UPDATE production_runs SET paused=0, status='running', updated_at=? WHERE project_id=?", (utc_now(), project_id))
@@ -352,10 +360,22 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
             tts_res = generate_tts(sc["narration_segment"] or sc["title"], scene_wav, voice_id=narrator_voice, language=project["language"])
             actual_audio_dur = float(tts_res.get("duration_sec") or sc["duration_sec"])
             target_scene_dur = max(float(sc["duration_sec"]), actual_audio_dur + 0.4)
+            shot = shots_by_scene.get(sc["id"]) or {}
             render_res = render_scene_clip(
-                {**sc, "duration_sec": target_scene_dur}, scene_mp4,
+                {
+                    **sc,
+                    "duration_sec": target_scene_dur,
+                    "camera_movement": shot.get("camera_movement") or sc.get("camera_movement"),
+                    "lighting": shot.get("lighting") or sc.get("lighting"),
+                    "shot_type": shot.get("shot_type") or sc.get("shot_type"),
+                },
+                scene_mp4,
                 category=project["category"], resolution=project["resolution"], fps=int(project["fps"]),
                 render_engine=sc.get("render_engine") or project["render_engine"],
+                project_topic=project_topic,
+                scene_index=idx,
+                excluded_sha256=used_hashes,
+                source_media=footage[idx % len(footage)] if footage else None,
             )
             with get_conn() as conn:
                 v_asset_id, a_asset_id = f"ast_{uuid.uuid4().hex[:8]}", f"ast_{uuid.uuid4().hex[:8]}"
@@ -381,7 +401,7 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
     _save_checkpoint(project_id, ProductionStage.AUDIO_SYNC.value, "running", {"total_duration_sec": total_dur})
     music_wav = ws / "audio" / "background_music.wav"
     mood = "comedy" if "funny" in project["prompt"].lower() else ("cinematic" if project["category"] in ("documentary", "cinematic") else "upbeat")
-    generate_music_bed(music_wav, duration_sec=min(total_dur, 60.0), mood=mood)
+    generate_music_bed(music_wav, duration_sec=total_dur, mood=mood)
     stems = mix_audio_stems(narration_wavs, music_wav, sfx_cues, total_dur, ws / "stems", music_volume=0.25)
     sub_langs = project.get("subtitle_languages") or ["en"]
     subs = generate_subtitles(scenes_with_timings, ws / "subtitles", languages=sub_langs, word_level=True)
@@ -408,10 +428,12 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
     export_final_deliverable(silent_master, Path(stems["master_mix"]), final_mp4, chapters=chapter_meta, subtitle_srt=primary_srt, fmt="mp4", codec="h264", resolution=project["resolution"], fps=int(project["fps"]))
 
     _save_checkpoint(project_id, ProductionStage.QUALITY_ASSURANCE.value, "running", {})
+    rendered_ok = sum(1 for s in scenes if (ws / "renders" / f"{s['id']}.mp4").is_file())
     qa_report = run_qa_verification(
         project_id, final_mp4, expected_aspect_ratio=project["aspect_ratio"], expected_fps=int(project["fps"]),
         subtitle_paths=[Path(v["srt"]) for v in subs["files"].values()],
-        scene_count_expected=len(scenes), scene_count_rendered=len(scenes),
+        scene_count_expected=len(scenes), scene_count_rendered=rendered_ok,
+        expected_duration_sec=total_dur,
     )
     _log_agent_message(project_id, "Quality Assurance Agent", f"QA executed on {final_mp4.name}: {qa_report['summary']}")
 
@@ -466,9 +488,18 @@ def regenerate_single_scene(project_id: str, req: SceneRegenerateRequest) -> dic
     scene_wav = ws / "audio" / f"{scene['id']}_narration.wav"
     scene_mp4 = ws / "renders" / f"{scene['id']}.mp4"
 
+    from backend.services.screenwriting_service import _extract_subject
     tts_res = generate_tts(new_narration, scene_wav, language=project["language"])
     new_dur = max(float(scene["duration_sec"]), float(tts_res.get("duration_sec", 4.0)) + 0.4)
-    render_scene_clip({**scene, "generation_prompt": new_prompt, "duration_sec": new_dur}, scene_mp4, category=project["category"], resolution=project["resolution"], fps=int(project["fps"]), render_engine=new_engine)
+    render_scene_clip(
+        {**scene, "generation_prompt": new_prompt, "duration_sec": new_dur},
+        scene_mp4,
+        category=project["category"],
+        resolution=project["resolution"],
+        fps=int(project["fps"]),
+        render_engine=new_engine,
+        project_topic=_extract_subject(project["prompt"]) or project["title"],
+    )
 
     with get_conn() as conn:
         conn.execute("UPDATE scenes SET narration_segment=?, generation_prompt=?, render_engine=?, duration_sec=?, quality_status='generated' WHERE id=?", (new_narration, new_prompt, new_engine, new_dur, scene["id"]))

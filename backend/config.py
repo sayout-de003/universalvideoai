@@ -77,6 +77,9 @@ class HardwareProfile:
     disk_free_gb: float
     disk_total_gb: float
     gpu_backend: str
+    execution_profile: str = "lightweight"
+    local_diffusion_eligible: bool = False
+    chromium_path: str | None = None
     binaries: dict[str, bool] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -88,8 +91,27 @@ class HardwareProfile:
             "disk_free_gb": self.disk_free_gb,
             "disk_total_gb": self.disk_total_gb,
             "gpu_backend": self.gpu_backend,
+            "execution_profile": self.execution_profile,
+            "local_diffusion_eligible": self.local_diffusion_eligible,
+            "chromium_path": self.chromium_path,
             "binaries": self.binaries,
         }
+
+
+def detect_chromium_path() -> str | None:
+    candidates = [
+        shutil.which("google-chrome"),
+        shutil.which("chromium"),
+        shutil.which("chromium-browser"),
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    ]
+    for cand in candidates:
+        if cand and Path(cand).is_file():
+            return str(cand)
+    return None
 
 
 def detect_hardware() -> HardwareProfile:
@@ -97,6 +119,7 @@ def detect_hardware() -> HardwareProfile:
     arch = platform.machine().lower()
     usage = shutil.disk_usage(ROOT_DIR)
     ram_gb = _detect_ram_gb()
+    disk_free_gb = round(usage.free / (1024**3), 2)
 
     if system == "Darwin" and "arm" in arch:
         gpu_backend = "apple_silicon_mps"
@@ -110,15 +133,28 @@ def detect_hardware() -> HardwareProfile:
         "manim", "piper", "whisper-cpp", "whisper", "ollama", "yt-dlp", "say",
     ]
     binaries = {name: shutil.which(name) is not None for name in binary_names}
+    chromium_path = detect_chromium_path()
+    binaries["chromium"] = chromium_path is not None
+
+    local_diffusion_eligible = ram_gb >= 24.0 and disk_free_gb >= 40.0 and gpu_backend in ("cuda", "apple_silicon_mps")
+    if local_diffusion_eligible:
+        execution_profile = "full_local"
+    elif ram_gb >= 16.0:
+        execution_profile = "professional_hybrid"
+    else:
+        execution_profile = "lightweight"
 
     return HardwareProfile(
         os_name=f"{system} {platform.release()}",
         arch=arch,
         cpu_cores=os.cpu_count() or 1,
         ram_gb=ram_gb,
-        disk_free_gb=round(usage.free / (1024**3), 2),
+        disk_free_gb=disk_free_gb,
         disk_total_gb=round(usage.total / (1024**3), 2),
         gpu_backend=gpu_backend,
+        execution_profile=execution_profile,
+        local_diffusion_eligible=local_diffusion_eligible,
+        chromium_path=chromium_path,
         binaries=binaries,
     )
 
