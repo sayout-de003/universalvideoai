@@ -14,7 +14,16 @@ from backend.services.format_catalog import FORMAT_CATALOG, get_format_spec, res
 
 
 def parse_duration_seconds(text: str) -> float | None:
+    from backend.services.document_parser import parse_structured_screenplay
+
+    parsed = parse_structured_screenplay(text)
+    if parsed.get("is_structured") and parsed.get("duration_sec"):
+        return max(5.0, float(parsed["duration_sec"]))
+
     lower = text.lower()
+    m_rt = re.search(r"runtime\s*:\s*(\d+(?:\.\d+)?)\s*s", lower)
+    if m_rt:
+        return max(5.0, float(m_rt.group(1)))
     m_hr = re.search(r"(\d+(?:\.\d+)?)[\s-]*(?:hour|hr)s?", lower)
     m_min = re.search(r"(\d+(?:\.\d+)?)[\s-]*(?:minute|min)s?", lower)
     m_sec = re.search(r"(\d+(?:\.\d+)?)[\s-]*(?:second|sec)s?", lower)
@@ -28,19 +37,28 @@ def parse_duration_seconds(text: str) -> float | None:
 
 
 def extract_clean_title(prompt: str) -> str:
+    from backend.services.document_parser import parse_structured_screenplay
+
+    parsed = parse_structured_screenplay(prompt)
+    if parsed.get("title"):
+        return str(parsed["title"])[:80]
+
+    first_line = prompt.strip().splitlines()[0] if prompt.strip() else ""
+    cleaned = re.sub(r"^[#*\s]+", "", first_line)
+    cleaned = re.sub(r"\*Format:.*$", "", cleaned, flags=re.IGNORECASE).strip()
     cleaned = re.sub(
         r"^(?:i want to (?:create|make|produce)|create|make|produce|generate|build)\s+(?:a|an|the)?\s*",
-        "",
-        prompt.strip(),
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(
-        r"^(?:(?:cinematic|short|long|animated|educational)\s+)*(?:documentary|video|film|reel|short|commercial|ad|explainer|trailer)\s+(?:about|on|for|of)\s+",
         "",
         cleaned,
         flags=re.IGNORECASE,
     )
-    words = [w for w in re.split(r"\s+", cleaned.strip().rstrip(".,!?")) if w]
+    cleaned = re.sub(
+        r"^(?:(?:cinematic|short|long|animated|educational)\s+)*(?:documentary|video|film|reel|short|commercial|ad|explainer|trailer|screenplay)\s*(?::|about|on|for|of)\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    words = [w for w in re.split(r"\s+", cleaned.strip().rstrip(".,!?*#")) if w]
     title = " ".join(words[:9]).strip()
     return title[:1].upper() + title[1:] if title else "Untitled Production"
 

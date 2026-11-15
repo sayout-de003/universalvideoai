@@ -23,6 +23,14 @@ function fileSize(bytes: number) {
   return bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
+function cleanTitle(raw: string): string {
+  return (raw || "")
+    .replace(/^[#*\s]+/, "")
+    .replace(/^(?:SCREENPLAY|SCRIPT|PROJECT)\s*:\s*/i, "")
+    .replace(/\*?Format\s*:.*$/i, "")
+    .trim() || "Untitled Production";
+}
+
 export function DashboardView({ health, engines, projects, storageUsedMb, onOpenProject, onNewProject, onRefreshProjects, onError }: Props) {
   const [filesOpen, setFilesOpen] = useState<string | null>(null);
   const [folders, setFolders] = useState<Record<string, Folders>>({});
@@ -82,7 +90,7 @@ export function DashboardView({ health, engines, projects, storageUsedMb, onOpen
                 <div className="p-4 flex items-center gap-4">
                   <button onClick={() => onOpenProject(p.id)} className="flex-1 min-w-0 text-left">
                     <div className="flex items-center gap-2.5">
-                      <span className="font-bold text-[15px] truncate">{p.title}</span>
+                      <span className="font-bold text-[15px] truncate">{cleanTitle(p.title)}</span>
                       <span className={chipClass[pr.tone]}>{pr.tone === "live" && <span className="w-1.5 h-1.5 rounded-full bg-live tally" />}{pr.label}</span>
                     </div>
                     <div className="hint mt-0.5 truncate">

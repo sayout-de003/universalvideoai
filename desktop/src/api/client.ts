@@ -1,17 +1,38 @@
 import type { HealthResponse, ProjectDetail, ProjectSummary } from "../types/studio";
 
 export const API_BASE =
-  typeof window !== "undefined" && window.location.protocol.startsWith("http")
+  import.meta.env.VITE_API_BASE ||
+  (typeof window !== "undefined" &&
+  window.location.protocol.startsWith("http") &&
+  window.location.port !== "5173"
     ? ""
-    : "http://127.0.0.1:8420";
+    : "http://127.0.0.1:8420");
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-    ...init,
-  });
+  const headers: Record<string, string> =
+    init?.body instanceof FormData
+      ? { ...((init?.headers as Record<string, string>) || {}) }
+      : { "Content-Type": "application/json", ...((init?.headers as Record<string, string>) || {}) };
+
+  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
   return res.json();
+}
+
+export interface ExtractedFileResult {
+  ok: boolean;
+  filename: string;
+  extension: string;
+  size_bytes: number;
+  kind: string;
+  extracted_text: string;
+  is_structured_screenplay?: boolean;
+  parsed_title?: string | null;
+  parsed_subject?: string | null;
+  parsed_duration_sec?: number | null;
+  scene_count?: number;
+  scenes?: Array<Record<string, unknown>>;
+  media_info?: Record<string, unknown>;
 }
 
 export const studioClient = {
@@ -41,4 +62,14 @@ export const studioClient = {
   addArtifactComment: (id: string, artifactName: string, commentText: string) => req<Record<string, unknown>>(`/api/projects/${id}/package/${encodeURIComponent(artifactName)}/comments`, { method: "POST", body: JSON.stringify({ comment_text: commentText }) }),
   approveGates: (id: string, gateName = "all") => req<Record<string, unknown>>(`/api/projects/${id}/gates/approve`, { method: "POST", body: JSON.stringify({ gate_name: gateName }) }),
   runResearch: (id: string) => req<Record<string, unknown>>(`/api/projects/${id}/research`, { method: "POST" }),
+  extractFile: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return req<ExtractedFileResult>("/api/files/extract", { method: "POST", body: fd });
+  },
+  uploadProjectFile: (projectId: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return req<Record<string, unknown>>(`/api/projects/${projectId}/upload`, { method: "POST", body: fd });
+  },
 };

@@ -68,6 +68,8 @@ class ProjectCreateRequest(BaseModel):
     title: str | None = None
     prompt: str = Field(..., min_length=3)
     mode: ProductionMode = ProductionMode.AUTOMATIC
+    video_format: str | None = None
+    voice_mode: str | None = "auto"
     target_duration_sec: float | None = Field(default=None, gt=0)
     aspect_ratio: str = "16:9"
     resolution: str = "1920x1080"

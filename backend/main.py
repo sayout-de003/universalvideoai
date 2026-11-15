@@ -295,20 +295,44 @@ def api_export_project(project_id: str, req: ExportRequest) -> dict[str, Any]:
     return export_final_deliverable(silent_master, master_mix, out_path, chapters=chapters, fmt=req.format, codec=req.codec, resolution=req.resolution, fps=req.fps, bitrate=req.bitrate)
 
 
+@app.post("/api/files/extract")
+async def api_extract_any_file(file: UploadFile = File(...)) -> dict[str, Any]:
+    """Read and extract text, scenes, and metadata from ANY uploaded file type (.pdf, .docx, .doc, .rtf, .md, .txt, .json, .csv, .srt, .vtt, .html, media)."""
+    from backend.services.document_parser import extract_text_from_any_file
+
+    tmp_dir = PROJECTS_DIR / "_extract_tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(file.filename or "upload.bin").name
+    tmp_path = tmp_dir / f"{uuid.uuid4().hex[:8]}_{safe_name}"
+    content = await file.read()
+    tmp_path.write_bytes(content)
+    try:
+        return extract_text_from_any_file(tmp_path, filename=safe_name)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 @app.post("/api/projects/{project_id}/upload")
 async def api_upload_asset(project_id: str, file: UploadFile = File(...)) -> dict[str, Any]:
+    from backend.services.document_parser import extract_text_from_any_file
+
     detail = get_project_detail(project_id)
     if not detail:
         raise HTTPException(status_code=404, detail="Project not found")
     ws = Path(detail["project"]["workspace_dir"])
-    dest = ws / "assets" / Path(file.filename or "upload.bin").name
+    safe_name = Path(file.filename or "upload.bin").name
+    dest = ws / "assets" / safe_name
     dest.parent.mkdir(parents=True, exist_ok=True)
     content = await file.read()
     dest.write_bytes(content)
+    extracted = extract_text_from_any_file(dest, filename=safe_name)
     asset_id = f"ast_{uuid.uuid4().hex[:8]}"
     with get_conn() as conn:
-        conn.execute("INSERT INTO assets (id, project_id, asset_type, provider, file_path, license, created_at) VALUES (?, ?, 'user_upload', 'user', ?, 'user_owned', ?)", (asset_id, project_id, str(dest), utc_now()))
-    return {"ok": True, "asset_id": asset_id, "file_path": str(dest), "size_bytes": len(content)}
+        conn.execute(
+            "INSERT INTO assets (id, project_id, asset_type, provider, file_path, license, metadata_json, created_at) VALUES (?, ?, 'user_upload', 'user', ?, 'user_owned', ?, ?)",
+            (asset_id, project_id, str(dest), json.dumps({"extracted_kind": extracted.get("kind"), "scene_count": extracted.get("scene_count", 0)}), utc_now()),
+        )
+    return {"ok": True, "asset_id": asset_id, "file_path": str(dest), "size_bytes": len(content), "extracted": extracted}
 
 
 @app.get("/api/projects/{project_id}/events")
@@ -475,13 +499,42 @@ def api_get_package(project_id: str) -> dict[str, Any]:
 
 @app.put("/api/projects/{project_id}/package/{artifact_name}")
 def api_update_artifact(project_id: str, artifact_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.services.document_parser import parse_structured_screenplay
     from backend.services.package_service import save_artifact_version
+
     detail = get_project_detail(project_id)
     if not detail:
         raise HTTPException(status_code=404, detail="Project not found")
-    content = payload.get("content", "")
-    author = payload.get("author", "user")
-    return save_artifact_version(project_id, Path(detail["project"]["workspace_dir"]), artifact_name, content, author=author, status="edited")
+    content = str(payload.get("content", ""))
+    author = str(payload.get("author", "user"))
+    res = save_artifact_version(project_id, Path(detail["project"]["workspace_dir"]), artifact_name, content, author=author, status="edited")
+    if artifact_name == "screenplay.md":
+        parsed = parse_structured_screenplay(content)
+        if parsed.get("is_structured") and parsed.get("scenes"):
+            db_scenes = detail.get("scenes") or []
+            with get_conn() as conn:
+                if parsed.get("title"):
+                    conn.execute("UPDATE projects SET title=?, updated_at=? WHERE id=?", (str(parsed["title"])[:90], utc_now(), project_id))
+                for idx, sc_new in enumerate(parsed["scenes"]):
+                    if idx < len(db_scenes):
+                        sc_id = db_scenes[idx]["id"]
+                        raw_t = str(sc_new["title"]).strip()
+                        sc_title = raw_t if raw_t.lower().startswith("scene ") else f"Scene {idx + 1}: {raw_t}"
+                        conn.execute(
+                            """UPDATE scenes SET title=?, script_segment=?, narration_segment=?,
+                               visual_description=?, generation_prompt=?, duration_sec=?
+                               WHERE id=?""",
+                            (
+                                sc_title,
+                                sc_new["narration_segment"],
+                                sc_new["narration_segment"],
+                                sc_new["visual_description"],
+                                sc_new["visual_description"],
+                                float(sc_new.get("duration_sec") or db_scenes[idx]["duration_sec"]),
+                                sc_id,
+                            ),
+                        )
+    return res
 
 
 @app.post("/api/projects/{project_id}/package/{artifact_name}/comments")

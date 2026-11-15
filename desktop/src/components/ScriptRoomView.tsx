@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Lock, MessageSquarePlus, Play, RotateCcw, Save } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Lock, MessageSquarePlus, Play, RotateCcw, Save, Upload } from "lucide-react";
 import { studioClient } from "../api/client";
 import { humanDuration, timecode } from "../lib/progress";
 import type { ProjectDetail } from "../types/studio";
@@ -35,18 +35,41 @@ const wordCount = (t: string) => (t.trim() ? t.trim().split(/\s+/).length : 0);
 // Same pacing the backend uses when it times narration (about 2.6 words a second).
 const NARRATION_WPS = 2.6;
 
+function synthesizeScreenplayFromProject(project: ProjectDetail): string {
+  const totalSec = project.scenes.reduce((acc, s) => acc + Number(s.duration_sec || 5), 0) || project.project.target_duration_sec;
+  const lines: string[] = [
+    `# SCREENPLAY: ${project.project.title.toUpperCase()}`,
+    `*Format: ${project.project.category} | Runtime: ${totalSec.toFixed(1)}s*`,
+    "",
+  ];
+  project.scenes.forEach((sc, idx) => {
+    const shot = project.shots.find((sh) => sh.scene_id === sc.id);
+    const voiceLabel = String(sc.provider || "").includes("warm") || String(sc.provider || "").includes("female") ? "FEMALE" : "MALE";
+    lines.push(
+      `## ${sc.title.toUpperCase()} (${Number(sc.duration_sec || 5).toFixed(1)}s) — [Engine: ${sc.render_engine || project.project.render_engine} | Transition: ${sc.transition || "smoothleft"}]`,
+      `**VISUAL:** ${sc.visual_description || ""}`,
+      `**CAMERA:** ${shot?.shot_type || "medium"} / ${shot?.camera_angle || "eye_level"} / ${shot?.camera_movement || "slow_push_in"} | **LIGHTING:** ${shot?.lighting || "natural"}`,
+      `**NARRATION / VO (${voiceLabel}):** ${sc.narration_segment || ""}`,
+      ""
+    );
+  });
+  return lines.join("\n");
+}
+
 export function ScriptRoomView({ project, onRefresh, onStartProduction }: Props) {
   const pid = project.project.id;
+  const fallbackScreenplay = useMemo(() => synthesizeScreenplayFromProject(project), [project]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [missing, setMissing] = useState<string[]>([]);
   const [selected, setSelected] = useState("screenplay.md");
-  const [saved, setSaved] = useState("");
-  const [draft, setDraft] = useState("");
+  const [saved, setSaved] = useState(fallbackScreenplay);
+  const [draft, setDraft] = useState(fallbackScreenplay);
   const [note, setNote] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [openGroup, setOpenGroup] = useState("Script and story");
   const [busy, setBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
 
@@ -58,18 +81,55 @@ export function ScriptRoomView({ project, onRefresh, onStartProduction }: Props)
   const isJson = selected.endsWith(".json");
 
   const load = async (keep = selectedRef.current) => {
-    const res = await studioClient.getPackage(pid);
-    setArtifacts(res.artifacts);
-    setMissing(res.approval_status.missing_gates);
-    const found = res.artifacts.find((a) => a.artifact_name === keep) || res.artifacts[0];
-    if (found) {
-      setSelected(String(found.artifact_name));
-      setSaved(String(found.content_text || ""));
-      setDraft(String(found.content_text || ""));
+    try {
+      const res = await studioClient.getPackage(pid);
+      if (res.artifacts && res.artifacts.length > 0) {
+        setArtifacts(res.artifacts);
+        setMissing(res.approval_status?.missing_gates || []);
+        const found = res.artifacts.find((a) => a.artifact_name === keep) || res.artifacts[0];
+        if (found) {
+          const text = String(found.content_text || "") || (found.artifact_name === "screenplay.md" ? fallbackScreenplay : "");
+          setSelected(String(found.artifact_name));
+          setSaved(text);
+          setDraft(text);
+          return;
+        }
+      }
+    } catch {
+      // Fallback to synthesized documents from project.scenes if package endpoint is unavailable
     }
+    const synthList: Artifact[] = [
+      { artifact_name: "screenplay.md", version: 1, content_text: fallbackScreenplay },
+      { artifact_name: "storyboard.json", version: 1, content_text: JSON.stringify(project.scenes, null, 2) },
+      { artifact_name: "generation_plan.json", version: 1, content_text: JSON.stringify({ project_id: pid, render_engine: project.project.render_engine, scenes: project.scenes.map((s) => s.id) }, null, 2) },
+    ];
+    setArtifacts(synthList);
+    setSelected("screenplay.md");
+    setSaved(fallbackScreenplay);
+    setDraft(fallbackScreenplay);
   };
 
-  useEffect(() => { load("screenplay.md").catch((e) => setMsg({ kind: "error", text: String(e) })); }, [pid]);
+  useEffect(() => { load("screenplay.md"); }, [pid, fallbackScreenplay]);
+
+  const handleImportFile = async (file: File) => {
+    setBusy(true);
+    try {
+      const extracted = await studioClient.extractFile(file);
+      if (extracted.extracted_text) {
+        setDraft(extracted.extracted_text);
+        setMsg({
+          kind: "ok",
+          text: `Imported ${extracted.filename} (${extracted.kind}${extracted.scene_count ? `, ${extracted.scene_count} scenes` : ""}). Click Save to apply.`,
+        });
+      }
+    } catch {
+      const rawText = await file.text();
+      setDraft(rawText);
+      setMsg({ kind: "ok", text: `Imported ${file.name}. Click Save to apply.` });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const choose = (a: Artifact) => {
     if (dirty && !window.confirm("You have unsaved changes in this document. Discard them?")) return;
@@ -223,6 +283,19 @@ export function ScriptRoomView({ project, onRefresh, onStartProduction }: Props)
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="*/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleImportFile(f);
+                }}
+              />
+              <button className="btn btn-quiet text-xs py-1 px-2.5" disabled={busy} onClick={() => fileInputRef.current?.click()}>
+                <Upload className="w-3.5 h-3.5" /> Import file
+              </button>
               {dirty && <span className="chip chip-hold">Unsaved changes</span>}
               <button className="btn btn-ghost" disabled={!dirty || busy} onClick={() => setDraft(saved)}><RotateCcw className="w-4 h-4" /> Revert</button>
               <button className="btn btn-primary" disabled={!dirty || busy} onClick={save}><Save className="w-4 h-4" /> Save</button>

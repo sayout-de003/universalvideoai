@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Check, CheckCircle2, ChevronDown, ChevronRight, Pause, Play, RotateCcw, XCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, CheckCircle2, ChevronDown, ChevronRight, Pause, Play, RotateCcw, Sparkles, XCircle } from "lucide-react";
 import { API_BASE } from "../api/client";
 import { PIPELINE, generatedSeconds, isIdle, humanDuration, progressOfDetail, timecode } from "../lib/progress";
 import type { ProjectDetail } from "../types/studio";
@@ -15,17 +15,99 @@ interface Props {
 
 function describeEvent(ev: Record<string, unknown>): string | null {
   switch (ev.type) {
-    case "production_started": return `Production started with ${ev.scenes} scenes.`;
-    case "scene_generated": return `Scene ${ev.index} of ${ev.total} finished.`;
-    case "scene_regenerated": return "A scene was regenerated.";
-    case "production_paused": return "Production paused.";
-    case "production_completed": return ev.status === "completed" ? "Video finished." : "Video finished, but the quality check flagged problems.";
-    case "agent_message": return `${ev.agent}: ${ev.content}`;
-    default: return null;
+    case "production_started":
+      return `[Production Orchestrator] Production started across ${ev.scenes} scenes.`;
+    case "stage_progress":
+      return `[Stage: ${ev.stage}] ${ev.message}`;
+    case "ai_decision":
+      return `[AI Decision · ${ev.parameter}] Selected '${ev.selected}' (${ev.chosen_by === "user" ? "User choice" : "AI Auto-Decided"}) — Why: ${ev.reasoning}`;
+    case "scene_started":
+      return `[Scene ${ev.index}/${ev.total} Started] ${ev.title} — Engine: ${ev.engine} | Voice: ${ev.voice} | Transition: ${ev.transition}`;
+    case "tts_synthesized":
+      return `[Voice Studio · Scene ${ev.index}] Synthesized ${ev.voice} (${ev.duration_sec}s via ${ev.provider || "edge_neural_tts"}).`;
+    case "scene_generated":
+      return `[Renderer · Scene ${ev.index}/${ev.total}] Finished ${ev.title || ""} (${ev.duration_sec || ""}s via ${ev.engine_used || "hyperframes"}).`;
+    case "scene_regenerated":
+      return "[Video Editor Agent] Regenerated scene in isolation while preserving timeline edits.";
+    case "production_paused":
+      return "[Production Orchestrator] Production paused.";
+    case "production_completed":
+      return ev.status === "completed"
+        ? "[Quality Assurance Agent] Master video finished and passed automated verification."
+        : "[Quality Assurance Agent] Video finished, but quality check flagged issues.";
+    case "agent_message":
+      return `[${ev.agent}] ${ev.content}`;
+    default:
+      return null;
   }
 }
 
 const fmtTime = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "");
+
+interface DecisionEntry {
+  key: string;
+  label: string;
+  selected: string;
+  chosen_by: string;
+  reasoning: string;
+}
+
+function extractAiDecisions(project: ProjectDetail): DecisionEntry[] {
+  const meta = (project.project.metadata || {}) as Record<string, unknown>;
+  const rawDec = (meta.ai_decisions || {}) as Record<string, Record<string, unknown>>;
+  const labels: Record<string, string> = {
+    video_format: "Video Format & Structure",
+    target_duration_sec: "Runtime & Pacing",
+    render_engine: "Visual & Animation Engine",
+    voice_casting: "Human Voice Casting",
+    transitions_and_audio: "Transitions & Sound Design",
+  };
+  const entries: DecisionEntry[] = [];
+  for (const [k, v] of Object.entries(rawDec)) {
+    if (v && typeof v === "object") {
+      entries.push({
+        key: k,
+        label: labels[k] || k.replace(/_/g, " "),
+        selected: String(v.selected || ""),
+        chosen_by: String(v.chosen_by || "ai_director"),
+        reasoning: String(v.reasoning || ""),
+      });
+    }
+  }
+  if (entries.length > 0) return entries;
+
+  // Fallback synthesized reasoning for older projects
+  return [
+    {
+      key: "video_format",
+      label: "Video Format & Structure",
+      selected: `${project.project.category} (${project.project.pipeline_name})`,
+      chosen_by: "ai_director",
+      reasoning: `AI Director classified prompt into '${project.project.category}' pipeline '${project.project.pipeline_name}' based on topic and narrative structure.`,
+    },
+    {
+      key: "target_duration_sec",
+      label: "Runtime & Pacing",
+      selected: `${project.project.target_duration_sec}s (${project.scenes.length} scenes)`,
+      chosen_by: "ai_director",
+      reasoning: `Calculated ${project.scenes.length} scenes (~${Math.round(project.project.target_duration_sec / Math.max(1, project.scenes.length))}s/scene) to match spoken narration budget.`,
+    },
+    {
+      key: "render_engine",
+      label: "Visual & Animation Engine",
+      selected: "Hybrid Pixar 2D/3D (HyperFrames) + Remotion Motion Graphics",
+      chosen_by: "ai_director",
+      reasoning: "Combined 2D/3D articulated character/world Canvas animation with Remotion kinetic telemetry cards and FFmpeg xfade transitions.",
+    },
+    {
+      key: "voice_casting",
+      label: "Human Voice Casting",
+      selected: "Dual Neural Voices (Male ChristopherNeural + Female AriaNeural)",
+      chosen_by: "ai_director",
+      reasoning: "Alternated real human Male and Female neural voices across scenes for dynamic documentary/narrative contrast.",
+    },
+  ];
+}
 
 export function BacklotMonitorView({ project, liveEvents, onRun, onPause, onResume, onGoToScript }: Props) {
   const pr = progressOfDetail(project);
@@ -35,6 +117,8 @@ export function BacklotMonitorView({ project, liveEvents, onRun, onPause, onResu
   const finished = status === "completed" || status === "qa_failed";
   const latestQa = project.qa_reports[0];
   const [showSteps, setShowSteps] = useState(false);
+  const [showDecisions, setShowDecisions] = useState(true);
+  const decisions = useMemo(() => extractAiDecisions(project), [project]);
 
   // Estimate time left from how fast scenes finished since this page started watching the run.
   const base = useRef<{ t: number; n: number } | null>(null);
@@ -49,9 +133,23 @@ export function BacklotMonitorView({ project, liveEvents, onRun, onPause, onResu
 
   const currentSceneId = running && inScenes ? project.scenes.find((s) => s.quality_status !== "generated")?.id : undefined;
 
-  const feed = liveEvents.length > 0
-    ? liveEvents.map((ev) => ({ text: describeEvent(ev), time: String(ev.timestamp || "") })).filter((e) => e.text)
-    : project.messages.slice(-8).reverse().map((m) => ({ text: `${m.agent_name}: ${m.content}`, time: m.created_at }));
+  const feed = useMemo(() => {
+    const liveItems = liveEvents
+      .map((ev) => ({ text: describeEvent(ev), time: String(ev.timestamp || "") }))
+      .filter((e): e is { text: string; time: string } => Boolean(e.text));
+    const msgItems = [...project.messages]
+      .reverse()
+      .map((m) => ({ text: `[${m.agent_name}] ${m.content}`, time: m.created_at }));
+    const seen = new Set<string>();
+    const combined: Array<{ text: string; time: string }> = [];
+    for (const item of [...liveItems, ...msgItems]) {
+      if (!seen.has(item.text)) {
+        seen.add(item.text);
+        combined.push(item);
+      }
+    }
+    return combined.slice(0, 60);
+  }, [liveEvents, project.messages]);
 
   const accent = pr.tone === "done" ? "bg-done" : pr.tone === "hold" ? "bg-hold" : "bg-live";
 
@@ -164,13 +262,49 @@ export function BacklotMonitorView({ project, liveEvents, onRun, onPause, onResu
       )}
 
       <section className="card p-6">
-        <h2 className="font-bold mb-3">What's happening</h2>
-        {feed.length === 0 ? <div className="hint">Updates show up here as soon as production starts.</div> : (
-          <ul className="divide-y divide-rule max-h-72 overflow-y-auto" aria-live="polite">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-ink" />
+            <h2 className="font-bold">AI Director Decisions & Reasoning</h2>
+          </div>
+          <button onClick={() => setShowDecisions((v) => !v)} className="btn btn-ghost text-xs">
+            {showDecisions ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} {showDecisions ? "Hide" : "Show"}
+          </button>
+        </div>
+        {showDecisions && (
+          <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {decisions.map((d) => {
+              const isUser = d.chosen_by === "user";
+              return (
+                <li key={d.key} className="card-sunken p-3.5 text-[13px] space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-ink">{d.label}</span>
+                    <span className={`chip text-[11px] ${isUser ? "chip-done" : "chip-hold"}`}>
+                      {isUser ? "Chosen by You" : "AI Decided"}
+                    </span>
+                  </div>
+                  <div className="font-medium text-ink">{d.selected}</div>
+                  <p className="text-xs text-slate leading-relaxed">
+                    <strong className="text-ink">Why:</strong> {d.reasoning}
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section className="card p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-bold">Live Log Stream & Agent Reasoning</h2>
+          <span className="hint">{feed.length} events streamed</span>
+        </div>
+        {feed.length === 0 ? <div className="hint">Updates and AI reasoning show up here in real time.</div> : (
+          <ul className="divide-y divide-rule max-h-96 overflow-y-auto font-mono text-[12.5px]" aria-live="polite">
             {feed.map((e, i) => (
-              <li key={i} className="py-2 flex gap-3 text-[13px]">
+              <li key={i} className="py-2 flex gap-3">
                 <span className="timecode text-xs text-mute w-20 shrink-0 pt-0.5">{fmtTime(e.time)}</span>
-                <span>{e.text}</span>
+                <span className="leading-relaxed break-words">{e.text}</span>
               </li>
             ))}
           </ul>

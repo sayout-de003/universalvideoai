@@ -20,9 +20,18 @@ const STEPS: Array<{ id: StudioTab; label: string; icon: typeof FileText }> = [
 
 const chipClass = { idle: "chip", live: "chip chip-live", done: "chip chip-done", hold: "chip chip-hold" } as const;
 
+function cleanDisplayTitle(raw: string): string {
+  let s = (raw || "").trim();
+  s = s.replace(/^[#*\s]+/, "");
+  s = s.replace(/^(?:SCREENPLAY|SCRIPT|PROJECT)\s*:\s*/i, "");
+  s = s.replace(/\*?Format\s*:.*$/i, "").trim();
+  return s || "Untitled Production";
+}
+
 export function ProjectHeader({ project, tab, onSelectTab, onBack }: Props) {
   const pr = progressOfDetail(project);
   const { done, total } = generatedSeconds(project);
+  const displayTitle = cleanDisplayTitle(project.project.title);
   const tabBtn = (id: StudioTab, label: string, Icon: typeof FileText) => (
     <button
       key={id}
@@ -38,7 +47,7 @@ export function ProjectHeader({ project, tab, onSelectTab, onBack }: Props) {
       <button onClick={onBack} className="btn btn-ghost -ml-2 mb-1"><ArrowLeft className="w-4 h-4" /> My videos</button>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight truncate max-w-[60ch]">{project.project.title}</h1>
+          <h1 className="text-2xl font-bold tracking-tight truncate max-w-[60ch]">{displayTitle}</h1>
           <div className="flex items-center gap-2 mt-1.5">
             <span className={chipClass[pr.tone]}>{pr.tone === "live" && <span className="w-1.5 h-1.5 rounded-full bg-live tally" />}{pr.label}</span>
             <span className="hint">{pr.headline}</span>

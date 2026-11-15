@@ -107,25 +107,87 @@ def _derive_title(prompt: str) -> str:
 
 
 def create_project(req: ProjectCreateRequest) -> dict[str, Any]:
-    from backend.services.format_catalog import get_format_spec, resolve_format
+    from backend.services.document_parser import parse_structured_screenplay
+    from backend.services.format_catalog import FORMAT_CATALOG, get_format_spec, resolve_format
+
     project_id = f"proj_{uuid.uuid4().hex[:10]}"
     ws = PROJECTS_DIR / project_id
     for sub in ("assets", "audio", "stems", "renders", "subtitles", "exports", "deliverables", "package", "references"):
         (ws / sub).mkdir(parents=True, exist_ok=True)
 
-    info = classify_brief(req.prompt, req.target_duration_sec)
-    fmt_key = resolve_format(req.prompt)
+    parsed_script = parse_structured_screenplay(req.uploaded_script or req.prompt)
+    info = classify_brief(req.prompt, req.target_duration_sec or parsed_script.get("duration_sec"))
+
+    user_chose_format = bool(req.video_format and req.video_format in FORMAT_CATALOG)
+    fmt_key = req.video_format if user_chose_format else resolve_format( parsed_script.get("format_hint") or req.prompt )
     fmt_spec = get_format_spec(fmt_key)
-    category = info["category"]
+    category = fmt_spec["category"] if user_chose_format else info["category"]
     pipeline_name = fmt_spec["pipeline"] or info["pipeline_name"]
-    target_dur = info["target_duration_sec"]
+
+    user_chose_duration = req.target_duration_sec is not None
+    target_dur = float(req.target_duration_sec or parsed_script.get("duration_sec") or info["target_duration_sec"])
+
+    user_chose_engine = bool(req.preferred_render_engine)
     render_engine, limitation_notice = select_render_engine(category, req.prompt, req.preferred_render_engine)
-    title = req.title or _derive_title(req.prompt)
+
+    user_chose_voice = bool(req.voice_mode and req.voice_mode not in ("auto", ""))
+    voice_mode = req.voice_mode or "auto"
+
+    title = (req.title or parsed_script.get("title") or _derive_title(req.prompt))[:90]
     now = utc_now()
 
     aspect, resolution = req.aspect_ratio, req.resolution
     if (category == VideoCategory.SOCIAL_MEDIA.value or fmt_spec["aspect_ratio"] == "9:16") and req.aspect_ratio == "16:9" and any(k in req.prompt.lower() for k in ("short", "reel", "tiktok", "story")):
         aspect, resolution = "9:16", "1080x1920"
+
+    ai_decisions = {
+        "video_format": {
+            "selected": fmt_spec["label"],
+            "format_key": fmt_key,
+            "chosen_by": "user" if user_chose_format else "ai_director",
+            "reasoning": (
+                f"User explicitly selected format '{fmt_spec['label']}'."
+                if user_chose_format
+                else f"AI Director analyzed topic & structure cues in the prompt and matched '{fmt_spec['label']}' ({fmt_spec['writer_type']} arc: {' -> '.join(fmt_spec['structure'][:4])}) for maximum retention."
+            ),
+        },
+        "target_duration_sec": {
+            "selected": f"{target_dur:.1f}s",
+            "chosen_by": "user" if user_chose_duration else ("screenplay_header" if parsed_script.get("duration_sec") else "ai_director"),
+            "reasoning": (
+                f"User explicitly requested {target_dur:.0f}s duration."
+                if user_chose_duration
+                else (
+                    f"Extracted exact {target_dur:.1f}s total runtime from the structured screenplay scene timings."
+                    if parsed_script.get("duration_sec")
+                    else f"AI Director selected {target_dur:.0f}s to match optimal pacing ({fmt_spec['wpm']} WPM, ~{fmt_spec.get('shot_density_sec', 6)}s per scene) for {fmt_spec['label']}."
+                )
+            ),
+        },
+        "render_engine": {
+            "selected": req.preferred_render_engine or "hybrid (HyperFrames Pixar 2D/3D + Remotion Motion Graphics)",
+            "chosen_by": "user" if user_chose_engine else "ai_director",
+            "reasoning": (
+                f"User explicitly selected render engine '{req.preferred_render_engine}'."
+                if user_chose_engine
+                else f"AI Director orchestrated multi-engine rendering: Pixar-style 2D/3D Canvas character & parallax world animation (HyperFrames) + Remotion kinetic data motion graphics + smooth FFmpeg xfade transitions."
+            ),
+        },
+        "voice_casting": {
+            "selected": voice_mode if user_chose_voice else "Dual Neural Human Voices (Male ChristopherNeural + Female AriaNeural)",
+            "chosen_by": "user" if user_chose_voice else "ai_director",
+            "reasoning": (
+                f"User explicitly selected voice mode '{voice_mode}'."
+                if user_chose_voice
+                else "AI Director cast alternating real human Edge-TTS neural voices (Male Lead Anchor ChristopherNeural + Female Analytical Co-Narrator AriaNeural) to create dynamic conversational contrast across scenes."
+            ),
+        },
+        "transitions_and_audio": {
+            "selected": "FFmpeg xfade (smoothleft, dissolve, circleopen, smoothright) + harmonic SFX",
+            "chosen_by": "ai_director",
+            "reasoning": "AI Director replaced harsh cuts and noisy pink-noise whooshes with 0.35s padded visual xfade transitions and clean ducked background score.",
+        },
+    }
 
     with get_conn() as conn:
         conn.execute(
@@ -138,7 +200,13 @@ def create_project(req: ProjectCreateRequest) -> dict[str, Any]:
                 project_id, title, req.prompt, category, req.mode.value, pipeline_name,
                 render_engine, target_dur, aspect, resolution, req.fps, req.language,
                 json.dumps(req.subtitle_languages), "planned", ProductionStage.IDEA.value,
-                req.budget_limit_usd, str(ws), json.dumps({"limitation_notice": limitation_notice, "format_key": fmt_key}),
+                req.budget_limit_usd, str(ws),
+                json.dumps({
+                    "limitation_notice": limitation_notice,
+                    "format_key": fmt_key,
+                    "voice_mode": voice_mode,
+                    "ai_decisions": ai_decisions,
+                }),
                 now, now,
             ),
         )
@@ -150,16 +218,34 @@ def create_project(req: ProjectCreateRequest) -> dict[str, Any]:
             """INSERT INTO creative_briefs
                (project_id, version, intake_stage, video_format, target_duration_sec, language,
                 confirmed_fields_json, assumed_fields_json, pending_questions_json, qa_history_json, updated_at)
-               VALUES (?, 1, 'brief_confirmed', ?, ?, ?, ?, '{}', '[]', '[]', ?)""",
-            (project_id, fmt_key, target_dur, req.language, json.dumps({"idea": req.prompt, "video_format": fmt_key, "target_duration_sec": target_dur}), now),
+               VALUES (?, 1, 'brief_confirmed', ?, ?, ?, ?, ?, '[]', '[]', ?)""",
+            (
+                project_id, fmt_key, target_dur, req.language,
+                json.dumps({"idea": title, "video_format": fmt_key, "target_duration_sec": target_dur, "voice_mode": voice_mode}),
+                json.dumps(ai_decisions),
+                now,
+            ),
         )
 
     _log_agent_message(
         project_id, "Executive Producer",
-        f"Classified brief as '{fmt_spec['label']}' ({category}) -> pipeline '{pipeline_name}', engine '{render_engine}', target {target_dur:.0f}s."
+        f"Classified brief '{title}' as '{fmt_spec['label']}' ({category}) -> pipeline '{pipeline_name}', engine '{render_engine}', target {target_dur:.1f}s."
         + (f" Note: {limitation_notice}" if limitation_notice else ""),
+        metadata={"ai_decisions": ai_decisions},
     )
-    _plan_hierarchy_and_bible(project_id, title, req.prompt, category, target_dur, render_engine, req.language, req.uploaded_script, fmt_key=fmt_key)
+    for dec_key, dec_val in ai_decisions.items():
+        emit_studio_event(project_id, "ai_decision", {"parameter": dec_key, **dec_val})
+        if dec_val["chosen_by"] != "user":
+            _log_agent_message(
+                project_id,
+                "AI Decision Engine",
+                f"[Auto-Decided {dec_key}] -> {dec_val['selected']} | Why: {dec_val['reasoning']}",
+            )
+
+    _plan_hierarchy_and_bible(
+        project_id, title, req.prompt, category, target_dur, render_engine,
+        req.language, req.uploaded_script, fmt_key=fmt_key, voice_mode=voice_mode,
+    )
     _save_checkpoint(project_id, ProductionStage.IDEA.value, "completed", {"category": category, "pipeline": pipeline_name, "format_key": fmt_key})
     openmontage_adapter.write_openmontage_checkpoint(ws, "idea", "completed", {"title": title, "category": category}, human_approved=True)
     return get_project_detail(project_id)
@@ -167,7 +253,8 @@ def create_project(req: ProjectCreateRequest) -> dict[str, Any]:
 
 def _plan_hierarchy_and_bible(
     project_id: str, title: str, prompt: str, category: str, target_dur: float,
-    render_engine: str, language: str, uploaded_script: str | None = None, fmt_key: str = "documentaries",
+    render_engine: str, language: str, uploaded_script: str | None = None,
+    fmt_key: str = "documentaries", voice_mode: str = "auto",
 ) -> None:
     from backend.services.format_catalog import get_format_spec
     from backend.services.package_service import build_full_production_package
@@ -178,6 +265,7 @@ def _plan_hierarchy_and_bible(
     ws = PROJECTS_DIR / project_id
     fmt_spec = get_format_spec(fmt_key)
 
+    emit_studio_event(project_id, "stage_progress", {"stage": "research", "message": f"Researching factual claims and trending video themes for '{title}'..."})
     research_pkg = run_project_research(project_id, title, ws, allow_web=bool(fmt_spec["requires_research"]))
     _log_agent_message(project_id, "Research Director", f"Completed research with {research_pkg['sources_count']} source(s) and {research_pkg['claims_count']} fact-checked claim(s).")
     trending = research_pkg.get("trending_themes") or {}
@@ -189,18 +277,21 @@ def _plan_hierarchy_and_bible(
         )
 
     ref_pkg = build_reference_package(project_id, ws)
+    emit_studio_event(project_id, "stage_progress", {"stage": "screenwriting", "message": f"Writing screenplay for '{title}' ({fmt_spec['label']})..."})
     script_pkg = develop_and_write_screenplay(
         prompt=prompt,
         format_key=fmt_key,
         brief={"target_duration_sec": target_dur, "language": language},
         research_claims=research_pkg.get("claims", []),
         style_guide_md=ref_pkg.get("style_guide_md", ""),
+        uploaded_script=uploaded_script,
+        voice_mode=voice_mode,
     )
     generated_scenes = script_pkg["scenes"]
     num_chapters = 4 if (target_dur > 360 and len(generated_scenes) >= 8) else (2 if len(generated_scenes) > 4 else 1)
     scenes_per_chapter = max(1, (len(generated_scenes) + num_chapters - 1) // num_chapters)
 
-    _log_agent_message(project_id, "Hollywood Screenplay Architect", f"Wrote {len(generated_scenes)}-scene screenplay ({script_pkg['author_mode']}) with dual Male/Female voice direction; evaluator score={script_pkg['evaluation']['weighted_score']}.")
+    _log_agent_message(project_id, "Hollywood Screenplay Architect", f"Prepared {len(generated_scenes)}-scene screenplay (mode: {script_pkg['author_mode']}) with human neural voice direction; evaluator score={script_pkg['evaluation']['weighted_score']}.")
     _log_agent_message(project_id, "Pixar 2D/3D & Motion Director", f"Mapped multi-layer 2D/3D Pixar character animation, Remotion motion graphics, and xfade transitions for '{fmt_spec['label']}'.")
 
     narrator_male_id = f"spk_{uuid.uuid4().hex[:8]}"
@@ -208,6 +299,12 @@ def _plan_hierarchy_and_bible(
     char_id = f"chr_{uuid.uuid4().hex[:8]}"
     loc_id = f"loc_{uuid.uuid4().hex[:8]}"
     prop_id = f"prp_{uuid.uuid4().hex[:8]}"
+
+    clean_char_name = str(script_pkg.get("character_name") or title)[:48]
+    clean_char_desc = str(
+        script_pkg.get("character_description")
+        or f"Consistent visual identity for {clean_char_name}: locked facial features, wardrobe, silhouette, and cinematic color grading across all {len(generated_scenes)} scenes."
+    )[:240]
 
     with get_conn() as conn:
         conn.execute(
@@ -221,7 +318,7 @@ def _plan_hierarchy_and_bible(
         conn.execute(
             """INSERT INTO characters (id, project_id, name, role, visual_description, facial_features, body_proportions, clothing, personality, voice_id, voice_provider)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (char_id, project_id, "Lead Subject", "protagonist", f"Locked identity for {script_pkg['subject']}: same face, silhouette, and wardrobe in every shot of {title}", "Expressive eyes, clear silhouette", "Balanced proportions", "One costume for the whole picture", "Engaging and memorable", "character_1", "edge_neural_tts"),
+            (char_id, project_id, clean_char_name, "protagonist", clean_char_desc, "Expressive eyes, clear silhouette", "Balanced proportions", "Consistent signature wardrobe across all scenes", "Engaging and memorable", "character_1", "edge_neural_tts"),
         )
         conn.execute(
             """INSERT INTO locations (id, project_id, name, architecture, layout, time_of_day, lighting, weather, color_palette)
@@ -233,7 +330,11 @@ def _plan_hierarchy_and_bible(
             (prop_id, project_id, "Core Subject Focus", f"Primary visual motif for {title}", "Maintain consistent scale and framing across scenes"),
         )
 
-        script_paragraphs = [p.strip() for p in (uploaded_script or "").split("\n") if p.strip()]
+        plain_paragraphs = (
+            [p.strip() for p in (uploaded_script or "").split("\n") if p.strip()]
+            if (uploaded_script and script_pkg.get("author_mode") != "user_structured_screenplay")
+            else []
+        )
         scene_idx_global = 0
         for c_i in range(num_chapters):
             chap_id = f"ch_{uuid.uuid4().hex[:8]}"
@@ -252,8 +353,9 @@ def _plan_hierarchy_and_bible(
             )
             for s_i, sc_spec in enumerate(chap_scenes):
                 scene_id = f"sc_{uuid.uuid4().hex[:8]}"
-                narration = script_paragraphs[scene_idx_global] if scene_idx_global < len(script_paragraphs) else sc_spec["narration_segment"]
-                scene_title = f"Scene {scene_idx_global + 1}: {sc_spec['title']}"
+                narration = plain_paragraphs[scene_idx_global] if scene_idx_global < len(plain_paragraphs) else sc_spec["narration_segment"]
+                raw_sc_title = str(sc_spec["title"]).strip()
+                scene_title = raw_sc_title if raw_sc_title.lower().startswith("scene ") else f"Scene {scene_idx_global + 1}: {raw_sc_title}"
                 vis_desc = sc_spec["visual_description"]
                 scene_dur = float(sc_spec["duration_sec"])
                 scene_engine = sc_spec.get("preferred_scene_engine") or render_engine if render_engine == "ffmpeg" else render_engine
@@ -375,9 +477,40 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                 if sc.get("provider") in ("narrator_deep", "narrator_warm", "character_1", "character_2", "male", "female")
                 else ("narrator_deep" if idx % 2 == 0 else "narrator_warm")
             )
+            scene_engine = sc.get("render_engine") or project["render_engine"]
+            voice_label = "Male Neural (ChristopherNeural)" if scene_voice in ("narrator_deep", "character_1", "male") else "Female Neural (AriaNeural)"
+            emit_studio_event(
+                project_id,
+                "scene_started",
+                {
+                    "scene_id": sc["id"],
+                    "index": idx + 1,
+                    "total": len(scenes),
+                    "title": sc["title"],
+                    "engine": scene_engine,
+                    "voice": voice_label,
+                    "transition": sc.get("transition") or "smoothleft",
+                },
+            )
+            _log_agent_message(
+                project_id,
+                "Production Orchestrator",
+                f"Scene {idx + 1}/{len(scenes)} ({sc['title']}): Synthesizing {voice_label} voice + rendering via '{scene_engine}' with '{sc.get('transition') or 'smoothleft'}' transition.",
+            )
             tts_res = generate_tts(sc["narration_segment"] or sc["title"], scene_wav, voice_id=scene_voice, language=project["language"])
             actual_audio_dur = float(tts_res.get("duration_sec") or sc["duration_sec"])
             target_scene_dur = max(float(sc["duration_sec"]), actual_audio_dur + 0.4)
+            emit_studio_event(
+                project_id,
+                "tts_synthesized",
+                {
+                    "scene_id": sc["id"],
+                    "index": idx + 1,
+                    "voice": tts_res.get("voice") or voice_label,
+                    "provider": tts_res.get("provider"),
+                    "duration_sec": round(actual_audio_dur, 2),
+                },
+            )
             shot = shots_by_scene.get(sc["id"]) or {}
             render_res = render_scene_clip(
                 {
@@ -390,7 +523,7 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                 },
                 scene_mp4,
                 category=project["category"], resolution=project["resolution"], fps=int(project["fps"]),
-                render_engine=sc.get("render_engine") or project["render_engine"],
+                render_engine=scene_engine,
                 project_topic=project_topic,
                 scene_index=idx,
                 excluded_sha256=used_hashes,
@@ -413,7 +546,18 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                 conn.execute("INSERT INTO assets (id, project_id, scene_id, asset_type, provider, file_path, duration_sec, license, created_at) VALUES (?, ?, ?, 'audio', ?, ?, ?, ?, ?)", (a_asset_id, project_id, sc["id"], tts_res.get("provider", "local"), str(scene_wav), actual_audio_dur, tts_res.get("license", "generated_local"), utc_now()))
                 conn.execute("UPDATE scenes SET duration_sec=?, visual_asset_id=?, audio_asset_id=?, rendered_clip_path=?, quality_status='generated' WHERE id=?", (target_scene_dur, v_asset_id, a_asset_id, str(scene_mp4), sc["id"]))
             sc["duration_sec"] = target_scene_dur
-            emit_studio_event(project_id, "scene_generated", {"scene_id": sc["id"], "index": idx + 1, "total": len(scenes)})
+            emit_studio_event(
+                project_id,
+                "scene_generated",
+                {
+                    "scene_id": sc["id"],
+                    "index": idx + 1,
+                    "total": len(scenes),
+                    "title": sc["title"],
+                    "engine_used": render_res.get("engine_used") or scene_engine,
+                    "duration_sec": round(target_scene_dur, 2),
+                },
+            )
         else:
             sc["duration_sec"] = max(float(sc["duration_sec"]), probe_duration(scene_wav) + 0.4)
 

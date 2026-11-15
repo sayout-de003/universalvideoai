@@ -47,9 +47,17 @@ _DRAMATIC_PERSPECTIVES = (
 
 
 def _extract_subject(prompt: str) -> str:
-    s = prompt.strip()
+    from backend.services.document_parser import parse_structured_screenplay
+
+    parsed = parse_structured_screenplay(prompt)
+    if parsed.get("subject"):
+        return str(parsed["subject"])[:80]
+
+    first_line = prompt.strip().splitlines()[0] if prompt.strip() else ""
+    s = re.sub(r"^[#*\s]+", "", first_line)
+    s = re.sub(r"\*Format:.*$", "", s, flags=re.IGNORECASE).strip()
     s = re.sub(
-        r"^.*?\b(?:short\s+film|feature\s+film|documentary|video|film|reel|short|commercial|ad|explainer|trailer|course|story)\s+(?:about|on|for|of)\s+",
+        r"^.*?\b(?:short\s+film|feature\s+film|documentary|video|film|reel|short|commercial|ad|explainer|trailer|course|story|screenplay)\s*(?::|about|on|for|of)\s*",
         "",
         s,
         flags=re.IGNORECASE,
@@ -67,8 +75,8 @@ def _extract_subject(prompt: str) -> str:
         s,
         flags=re.IGNORECASE,
     )
-    s = re.sub(r"\s+", " ", s).strip().rstrip(".!?")
-    return s if len(s) >= 3 else prompt.strip().rstrip(".!?")
+    s = re.sub(r"\s+", " ", s).strip().rstrip(".!?*#")
+    return (s if len(s) >= 3 else first_line.strip().rstrip(".!?"))[:90]
 
 
 def _short_subject(subject: str, max_words: int = 4) -> str:
@@ -91,23 +99,24 @@ def _trim_to_word_budget(text: str, max_words: int) -> str:
     return trimmed
 
 
-def _cast_voice_for_scene(scene_idx: int, total_scenes: int, wtype: str, prompt: str) -> dict[str, str]:
-    """Cast real human Male and Female neural voices per scene based on dramatic role and prompt."""
+def _cast_voice_for_scene(scene_idx: int, total_scenes: int, wtype: str, prompt: str, voice_mode: str = "auto") -> dict[str, str]:
+    """Cast real human Male and Female neural voices per scene based on dramatic role and user choice."""
     low = prompt.lower()
-    force_female_only = "female only" in low or "only female" in low
-    force_male_only = "male only" in low or "only male" in low
+    vm = (voice_mode or "auto").lower().strip()
+    force_female_only = vm == "female" or "female only" in low or "only female" in low
+    force_male_only = vm == "male" or "male only" in low or "only male" in low or "male documentary narration" in low
 
     if force_female_only:
         return {
             "voice_gender": "female",
             "voice_id": "narrator_warm" if scene_idx % 2 == 0 else "character_2",
-            "speaker_name": "Female Narrator" if scene_idx % 2 == 0 else "Female Lead",
+            "speaker_name": "Female Narrator (AriaNeural)" if scene_idx % 2 == 0 else "Female Lead (JennyNeural)",
         }
     if force_male_only:
         return {
             "voice_gender": "male",
             "voice_id": "narrator_deep" if scene_idx % 2 == 0 else "character_1",
-            "speaker_name": "Male Narrator" if scene_idx % 2 == 0 else "Male Lead",
+            "speaker_name": "Male Narrator (ChristopherNeural)" if scene_idx % 2 == 0 else "Male Lead (GuyNeural)",
         }
 
     # Hollywood dual-voice storytelling: alternate Male Anchor and Female Co-Narrator / Protagonist
@@ -230,6 +239,7 @@ def _build_specialist_scenes_offline(
     num_scenes: int,
     words_per_scene: int,
     prompt: str = "",
+    voice_mode: str = "auto",
 ) -> list[dict[str, Any]]:
     """Hollywood-grade, skill-driven, research-grounded scene writer with Male/Female voice casting and 2D/3D animation cues."""
     beats = fmt_spec["structure"]
@@ -251,7 +261,7 @@ def _build_specialist_scenes_offline(
         surface_angle, deep_mechanism = _DRAMATIC_PERSPECTIVES[i % len(_DRAMATIC_PERSPECTIVES)]
         chapter_num = (i // len(beats)) + 1
         fact_line = verified_facts[i] if i < len(verified_facts) else ""
-        voice_cast = _cast_voice_for_scene(i, num_scenes, wtype, prompt or subject)
+        voice_cast = _cast_voice_for_scene(i, num_scenes, wtype, prompt or subject, voice_mode=voice_mode)
         anim_engine, anim_theme = _select_scene_animation_mode(i, num_scenes, wtype)
         transition = "cut" if i == 0 else _TRANSITION_CYCLE[(i - 1) % len(_TRANSITION_CYCLE)]
 
@@ -366,37 +376,65 @@ def develop_and_write_screenplay(
     brief: dict[str, Any],
     research_claims: list[dict[str, Any]] | None = None,
     style_guide_md: str = "",
+    uploaded_script: str | None = None,
+    voice_mode: str = "auto",
 ) -> dict[str, Any]:
     """Run Story Architect -> Hollywood Screenplay Architect -> Script Doctor -> Evaluator."""
+    from backend.services.document_parser import parse_structured_screenplay
+
     fmt_spec = get_format_spec(format_key)
-    subject = _extract_subject(prompt)
-    target_dur = float(brief.get("target_duration_sec") or fmt_spec["default_duration_sec"])
-
-    num_scenes = plan_scene_count(target_dur, float(fmt_spec.get("shot_density_sec") or 8.0))
-
-    per_scene_sec = max(2.5, target_dur / num_scenes)
-    spoken_budget_sec = max(1.5, per_scene_sec - 0.8)
-    words_per_scene = max(6, int(round((spoken_budget_sec / 60.0) * fmt_spec["wpm"])))
-
+    parsed_script = parse_structured_screenplay(uploaded_script or prompt)
+    subject = parsed_script.get("subject") or _extract_subject(prompt)
+    target_dur = float(
+        brief.get("target_duration_sec")
+        or parsed_script.get("duration_sec")
+        or fmt_spec["default_duration_sec"]
+    )
     claims = research_claims or []
-    scenes = _try_llm_screenplay(subject, fmt_spec, brief, claims, style_guide_md, num_scenes, words_per_scene)
-    author_mode = "llm_specialist" if scenes else "hollywood_skill_architect"
-    if not scenes:
-        scenes = _build_specialist_scenes_offline(subject, fmt_spec, brief, claims, num_scenes, words_per_scene, prompt=prompt)
-    else:
+
+    if parsed_script.get("is_structured") and parsed_script.get("scenes"):
+        scenes = list(parsed_script["scenes"])
+        author_mode = "user_structured_screenplay"
         for i, sc in enumerate(scenes):
-            cast = _cast_voice_for_scene(i, len(scenes), fmt_spec["writer_type"], prompt)
+            cast = _cast_voice_for_scene(i, len(scenes), fmt_spec["writer_type"], uploaded_script or prompt, voice_mode=voice_mode)
             eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"])
-            sc.setdefault("voice_gender", cast["voice_gender"])
-            sc.setdefault("voice_id", cast["voice_id"])
-            sc.setdefault("speaker_name", cast["speaker_name"])
+            if voice_mode in ("male", "female", "dual"):
+                sc["voice_gender"] = cast["voice_gender"]
+                sc["voice_id"] = cast["voice_id"]
+                sc["speaker_name"] = cast["speaker_name"]
+            else:
+                sc.setdefault("voice_gender", cast["voice_gender"])
+                sc.setdefault("voice_id", cast["voice_id"])
+                sc.setdefault("speaker_name", cast["speaker_name"])
             sc.setdefault("preferred_scene_engine", eng)
             sc.setdefault("animation_theme", theme)
             sc.setdefault("transition", "cut" if i == 0 else _TRANSITION_CYCLE[(i - 1) % len(_TRANSITION_CYCLE)])
+    else:
+        num_scenes = plan_scene_count(target_dur, float(fmt_spec.get("shot_density_sec") or 8.0))
+        per_scene_sec = max(2.5, target_dur / num_scenes)
+        spoken_budget_sec = max(1.5, per_scene_sec - 0.8)
+        words_per_scene = max(6, int(round((spoken_budget_sec / 60.0) * fmt_spec["wpm"])))
+
+        scenes = _try_llm_screenplay(subject, fmt_spec, brief, claims, style_guide_md, num_scenes, words_per_scene)
+        author_mode = "llm_specialist" if scenes else "hollywood_skill_architect"
+        if not scenes:
+            scenes = _build_specialist_scenes_offline(
+                subject, fmt_spec, brief, claims, num_scenes, words_per_scene, prompt=prompt, voice_mode=voice_mode
+            )
+        else:
+            for i, sc in enumerate(scenes):
+                cast = _cast_voice_for_scene(i, len(scenes), fmt_spec["writer_type"], prompt, voice_mode=voice_mode)
+                eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"])
+                sc.setdefault("voice_gender", cast["voice_gender"])
+                sc.setdefault("voice_id", cast["voice_id"])
+                sc.setdefault("speaker_name", cast["speaker_name"])
+                sc.setdefault("preferred_scene_engine", eng)
+                sc.setdefault("animation_theme", theme)
+                sc.setdefault("transition", "cut" if i == 0 else _TRANSITION_CYCLE[(i - 1) % len(_TRANSITION_CYCLE)])
 
     # Script Doctor + Audience Retention Editor: verify runtime & tighten/expand narration to hit target tolerance
     evaluation = evaluate_screenplay(fmt_spec["format_key"], {**brief, "target_duration_sec": target_dur}, scenes, claims)
-    if not evaluation["runtime_report"]["within_tolerance"]:
+    if author_mode != "user_structured_screenplay" and not evaluation["runtime_report"]["within_tolerance"]:
         actual = max(1.0, evaluation["runtime_report"]["estimated_total_sec"])
         scale = target_dur / actual
         for sc in scenes:
@@ -406,22 +444,25 @@ def develop_and_write_screenplay(
                 sc["narration_segment"] = _trim_to_word_budget(sc["narration_segment"], max(6, int(cur_words * scale)))
         evaluation = evaluate_screenplay(fmt_spec["format_key"], {**brief, "target_duration_sec": target_dur}, scenes, claims)
 
-    # Assign exact scene durations from runtime report
+    # Assign exact scene durations (preserve user scene duration if explicitly provided in structured screenplay)
     for idx, sc in enumerate(scenes):
-        sc["duration_sec"] = evaluation["runtime_report"]["scenes"][idx]["estimated_duration_sec"]
+        if author_mode == "user_structured_screenplay" and sc.get("duration_sec"):
+            sc["duration_sec"] = round(float(sc["duration_sec"]), 2)
+        else:
+            sc["duration_sec"] = evaluation["runtime_report"]["scenes"][idx]["estimated_duration_sec"]
         sc["order_index"] = idx
 
-    logline = f"A {fmt_spec['label'].lower()} exploring {subject} through {fmt_spec['structure'][0].lower()} to {fmt_spec['structure'][-1].lower()}."
+    logline = f"A {fmt_spec['label'].lower()} exploring {subject} through {scenes[0]['title'].lower()} to {scenes[-1]['title'].lower()}."
     treatment = (
         f"# Story Treatment: {subject}\n\n"
         f"**Format:** {fmt_spec['label']} ({fmt_spec['aspect_ratio']})\n"
         f"**Target Runtime:** {target_dur:.0f}s (Estimated: {evaluation['runtime_report']['estimated_total_sec']:.1f}s)\n"
-        f"**Narrative Arc:** {' -> '.join(fmt_spec['structure'])}\n"
+        f"**Narrative Arc:** {' -> '.join(s['title'] for s in scenes)}\n"
         f"**Voice Casting:** Dual Human Neural Voices (Male Anchor + Female Co-Narrator/Lead)\n\n"
         f"**Logline:** {logline}\n"
     )
 
-    screenplay_md_lines = [f"# SCREENPLAY: {subject.upper()}", f"*Format: {fmt_spec['label']} | Runtime: {evaluation['runtime_report']['estimated_total_sec']:.1f}s*", ""]
+    screenplay_md_lines = [f"# SCREENPLAY: {subject.upper()}", f"*Format: {fmt_spec['label']} | Runtime: {sum(float(s['duration_sec']) for s in scenes):.1f}s*", ""]
     for idx, sc in enumerate(scenes):
         screenplay_md_lines.extend([
             f"## SCENE {idx + 1}: {sc['title'].upper()} ({sc['duration_sec']:.1f}s) — [{sc.get('speaker_name', 'Narrator')} | Engine: {sc.get('preferred_scene_engine', 'hyperframes')} | Transition: {sc.get('transition', 'dissolve')}]",
@@ -434,6 +475,8 @@ def develop_and_write_screenplay(
 
     return {
         "subject": subject,
+        "character_name": parsed_script.get("character_name") or subject[:48],
+        "character_description": parsed_script.get("character_description") or f"Locked visual identity for {subject}: consistent facial features, silhouette, wardrobe, and color palette across every scene.",
         "format_spec": fmt_spec,
         "author_mode": author_mode,
         "logline": logline,
