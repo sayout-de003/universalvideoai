@@ -25,6 +25,7 @@ from backend.orchestration.audio_studio import (
     generate_tts,
     mix_audio_stems,
     probe_duration,
+    sanitize_spoken_voiceover,
 )
 from backend.orchestration.engine_registry import (
     VISUAL_STYLE_PROFILES,
@@ -716,7 +717,7 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                     "Production Orchestrator",
                     f"Scene {idx + 1}/{len(scenes)} ({sc['title']}): Synthesizing {voice_label} voice + rendering via '{scene_engine}' (style '{scene_style}') with '{sc.get('transition') or 'smoothleft'}' transition.",
                 )
-                clean_narr = (sc.get("narration_segment") or "").strip()
+                clean_narr = sanitize_spoken_voiceover(sc.get("narration_segment") or "", default="")
                 tts_res = generate_tts(
                     clean_narr,
                     scene_wav,

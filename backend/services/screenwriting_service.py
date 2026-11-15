@@ -83,20 +83,29 @@ def _strip_prompt_framing(raw: str) -> str:
     s = raw.strip()
     from backend.services.document_parser import clean_markdown_inline
 
+    # Strip guide, guideline, and meta-prompt framing first
+    s = re.sub(
+        r"(?i)\b(?:\d+\s*-?\s*(?:sec|second|seconds|min|minute|minutes|s)\s*)?(?:screenplay|script|video|animation)?\s*(?:guide|guideline|guidelines|instruction|instructions|breakdown|prompt|template|spec|specification|structure)\b[:\-]?\s*",
+        " ",
+        s,
+    )
+
     # Check for 'about ...', 'discussing ...', 'regarding ...', 'on the topic of ...'
     m = re.search(r"\b(?:about|discussing|regarding|exploring|on the topic of)\s+([^\n.]+)", s, flags=re.IGNORECASE)
     if m:
         topic = m.group(1).strip()
-        topic = re.sub(r"\b(?:in|for|with)?\s*(?:2d|3d|animated|animation|video|film|a script|script)\b", "", topic, flags=re.IGNORECASE).strip()
+        topic = re.sub(r"\b(?:in|for|with)?\s*(?:2d|3d|animated|animation|video|film|a script|script|guide)\b", "", topic, flags=re.IGNORECASE).strip()
+        topic = re.sub(r"\b(?:three|two|3|2)?\s*(?:people|characters|friends|persons)\s+talking(?:\s+to\s+each\s+other)?\b", "", topic, flags=re.IGNORECASE).strip()
         cleaned_topic = clean_markdown_inline(topic)
+        cleaned_topic = re.sub(r"^(?:on|about|for|of|with|in)\s+", "", cleaned_topic, flags=re.IGNORECASE).strip()
         if len(cleaned_topic) >= 3:
             return cleaned_topic
 
     s = re.sub(r"^(?:i want to (?:create|make|produce)|create|make|produce|generate|build|write|tell)\s+(?:an?|the)?\s*", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\b\d+\s*-?\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)\b", "", s, flags=re.IGNORECASE)
-    s = re.sub(r"\b(?:two\s+(?:people|characters|friends|persons)|2\s+people|people|characters)\s+talking(?:\s+to\s+each\s+other)?\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b(?:three|two|3|2)?\s*(?:people|characters|friends|persons)\s+talking(?:\s+to\s+each\s+other)?\b", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\b(?:2d|3d|pixar|anime|cartoon|animated|hand-drawn|whiteboard)\s*(?:animation|video|film|short)?\b", "", s, flags=re.IGNORECASE)
-    s = re.sub(r"\b(?:video|film|screenplay|story|animation|explainer|reel|short|documentary|script|a script)\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b(?:video|film|screenplay|story|animation|explainer|reel|short|documentary|script|a script|guide|guideline)\b", "", s, flags=re.IGNORECASE)
     s = re.sub(r"^(?:on|about|for|of|with|in)\s+", "", s, flags=re.IGNORECASE).strip()
     s = re.sub(r"\s+(?:on|about|for|of|with|in)$", "", s, flags=re.IGNORECASE).strip()
     s = re.sub(r"\s+", " ", s).strip()
@@ -536,20 +545,27 @@ def _build_conversation_scenes(
             ]
         eng, theme = _select_scene_animation_mode(0, num_scenes, fmt_spec["writer_type"], visual_style=visual_style or "2d_illustrated")
         scenes: list[dict[str, Any]] = []
+        shot_styles = [
+            ("medium_group_shot", "eye_level", "three_shot_balanced"),
+            ("medium_close", "eye_level", "rule_of_thirds"),
+            ("medium_two_shot", "slight_low_angle", "two_shot_focus"),
+            ("wide_hero", "eye_level", "three_shot_balanced"),
+        ]
         for i in range(max(3, num_scenes)):
             speaker, gender, voice_id, spk_idx, line = turns[i % len(turns)]
             narr = _trim_to_word_budget(line, max(8, words_per_scene))
+            st_shot, st_cam, st_comp = shot_styles[i % len(shot_styles)]
             scenes.append({
                 "title": f"Scene {i + 1}: {speaker}'s Perspective",
                 "purpose": f"Three-person animated dialogue exchange ({speaker} speaking)",
                 "narration_segment": narr,
-                "visual_description": f"2D animated modern conference room with three professionals (Alex, Maya, Liam) discussing job layoffs; {speaker} speaks while the other two listen attentively.",
-                "shot_type": "medium_group_shot",
-                "camera_angle": "eye_level",
+                "visual_description": f"2D animated modern conference room with floor-to-ceiling glass windows and digital wall telemetry. Three colleagues (Alex in navy suit, Maya in magenta blazer, Liam in emerald vest with glasses) sit at a sleek boardroom table with open laptops. {speaker} gestures expressively with realistic lip-sync while the others listen.",
+                "shot_type": st_shot,
+                "camera_angle": st_cam,
                 "camera_movement": "subtle_push_in",
                 "lighting": "modern_office_key",
-                "composition": "three_shot_balanced",
-                "on_screen_text": f"{speaker}: Layoff Discussion",
+                "composition": st_comp,
+                "on_screen_text": f"{speaker}: Modern Restructuring",
                 "sound_cue": "ambient_office_tone",
                 "transition": "cut" if i == 0 else _TRANSITION_CYCLE[(i - 1) % len(_TRANSITION_CYCLE)],
                 "voice_gender": gender,
@@ -562,8 +578,8 @@ def _build_conversation_scenes(
                 "preferred_scene_engine": "hyperframes",
                 "animation_theme": "2d_illustrated",
                 "visual_style": visual_style or "2d_illustrated",
-                "silent_action_sec": 0.25,
-                "pause_sec": 0.25,
+                "silent_action_sec": 0.35,
+                "pause_sec": 0.35,
             })
         return scenes
 

@@ -68,8 +68,8 @@ def sanitize_spoken_voiceover(raw_text: str, default: str = "Silence.") -> str:
     if not text:
         return default
 
-    # If text is solely a header / screenplay banner / scene label with no dialogue, never speak it
-    if re.match(r"^(?:#+\s*)*(?:SCREENPLAY|SCENE|ACT|EPISODE|CHAPTER|PART)\b", text, flags=re.IGNORECASE):
+    # If text is solely a header / screenplay banner / scene label with no spoken dialogue, never speak it
+    if re.fullmatch(r"^(?:#+\s*)*(?:SCREENPLAY|SCENE\s*\d*|ACT\s*\d*|EPISODE\s*\d*|CHAPTER\s*\d*|PART\s*\d*)[^:\n.!?]*(?::\s*[^:\n.!?]{0,40})?$", text, flags=re.IGNORECASE):
         if not re.search(r"\b(?:NARRATION|VO|SPOKEN|DIALOGUE|NARRATOR)\b", text, flags=re.IGNORECASE):
             return default
 
@@ -105,7 +105,10 @@ def sanitize_spoken_voiceover(raw_text: str, default: str = "Silence.") -> str:
             if re.match(r"^\*?\s*Format\s*:.*?Runtime\s*:", line_s, flags=re.IGNORECASE):
                 continue
             if re.match(r"^(?:#+\s*)*(?:SCREENPLAY|SCENE\s+\d+|ACT\s+\d+)\b", line_s, flags=re.IGNORECASE):
-                continue
+                remainder = re.sub(r"^(?:#+\s*)*(?:SCREENPLAY|SCENE\s+\d+|ACT\s+\d+)[^:\-]*[:\-]\s*", "", line_s, flags=re.IGNORECASE).strip()
+                if not remainder or (not re.search(r"[.!?“”\"]", remainder) and len(remainder.split()) < 5):
+                    continue
+                line_s = remainder
             # Screenplay field blocks
             if re.match(r"^(?:\*\*)?(?:VISUAL|CAMERA|LIGHTING|SOUND|ON-SCREEN\s+TEXT|COMPOSITION|PROPS?|LOCATION|TRANSITION|EFFECTS?|MUSIC|SFX)(?:\*\*)?\s*:", line_s, flags=re.IGNORECASE):
                 continue
@@ -122,26 +125,38 @@ def sanitize_spoken_voiceover(raw_text: str, default: str = "Silence.") -> str:
     if not text.strip():
         return default
 
-    # 3. Strip character speaker prefixes like 'NARRATOR: ' or 'NAPOLEON (calmly): '
-    text = re.sub(r"^(?:[A-Z0-9_\s]{2,24}(?:\s*\([^)]*\))?\s*:\s*)+", "", text)
+    # 3. Strip character speaker prefixes like 'NARRATOR: ', 'Alex: ', 'Maya (calmly): ', 'Speaker 1: '
+    text = re.sub(r"(?i)^(?:\s*(?:[A-Za-z0-9_\s]{1,32})(?:\s*\([^)]*\))?\s*:\s*)+", "", text)
+    # Also strip embedded speaker labels e.g. "Maya: I agree." if pasted into one block
+    text = re.sub(r"(?i)(?<=\.)\s*(?:[A-Za-z0-9_\s]{1,24})(?:\s*\([^)]*\))?\s*:\s*", " ", text)
 
     # 4. Strip semantic moment tags @{...} and action cues
     text = re.sub(r"@\{[^}]+\}", "", text)
-    # Strip sound cues and stage directions in brackets/parentheses
-    text = re.sub(r"\[(?:SFX|Sound|Music|Audio|Applause|Laughter|Beat|Pause|Ambient|V\.?O\.?|O\.?S\.?)[^\]]*\]", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\((?:SFX|Sound|Music|Audio|Applause|Laughter|Beat|Pause|Ambient|V\.?O\.?|O\.?S\.?|calmly|smiling|whispering|shouting|crying)[^)]*\)", "", text, flags=re.IGNORECASE)
+    # Strip ALL bracketed stage directions, action cues, and sound notes [Scene 1: ...], [Alex looks worried], [SFX: ...]
+    text = re.sub(r"\[[^\]]*\]", "", text)
+    # Strip parenthetical stage directions and acting cues (smiling), (pause), (looking at Maya), but keep plain text
+    text = re.sub(r"\((?!\s*\d+(?:\.\d+)?\s*s\s*\)[^)]*)[^)]*\)", "", text)
     # Strip timing tags like (5.3s) or [5.3s]
     text = re.sub(r"\(\s*\d+(?:\.\d+)?\s*s\s*\)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\[\s*\d+(?:\.\d+)?\s*s\s*\]", "", text, flags=re.IGNORECASE)
 
-    # 4b. Strip prompt-instruction wrappers and screenplay beat/scene meta prefixes
+    # 4b. Strip prompt-instruction wrappers, guide framing, and screenplay beat/scene meta prefixes
+    text = re.sub(
+        r"(?i)\b(?:\d+\s*-?\s*(?:sec|second|seconds|min|minute|minutes|s)\s*)?(?:screenplay|script|video|animation)?\s*(?:guide|guideline|guidelines|instruction|instructions|breakdown|prompt|template|spec|specification|structure)\b[:\-]?\s*",
+        "",
+        text,
+    )
     text = re.sub(
         r"^(?:(?:please\s+)?(?:create|make|generate|write|produce|build|render)\s+(?:a|an)\s+(?:\d+\s*(?:sec|second|seconds|min|minute|minutes|s)\s+)?(?:[\w-]+\s+){0,4}?(?:video|animation|film|clip|short|reel|script|screenplay)\s+(?:of|about|on|for|showing|featuring)?\s*)+",
         "",
         text,
         flags=re.IGNORECASE,
     )
+    text = re.sub(r"^(?:At\s+beat\s+\d+|In\s+(?:scene|step|phase|stage|chapter)\s+\d+|Scene\s+\d+[:\-]?).*?[:\-]\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^(?:At\s+beat\s+\d+|In\s+(?:scene|step|phase|stage|chapter)\s+\d+)\s*[,:\-]?\s*", "", text, flags=re.IGNORECASE)
+    # Strip any residual leading character name or perspective label with colon/dash after guide removal
+    text = re.sub(r"(?i)^(?:\s*(?:[A-Za-z0-9_\s'\-]{1,36})(?:\s*\([^)]*\))?\s*[:\-]\s*)+", "", text)
+    text = re.sub(r"(?i)^(?:for|about|on|of|with|in)\s+", "", text)
 
     # 5. Strip markdown tokens (#, *, _, `, ~, |, >)
     text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)

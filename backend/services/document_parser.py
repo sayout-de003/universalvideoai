@@ -44,7 +44,10 @@ def extract_dialogue_turns(text: str) -> list[dict[str, str]]:
             continue
         turns.append({"speaker": name, "line": clean_markdown_inline(line)})
     if len({turn["speaker"].lower() for turn in turns}) >= 2:
-        return turns
+        for t in turns:
+            from backend.orchestration.audio_studio import sanitize_spoken_voiceover
+            t["line"] = sanitize_spoken_voiceover(t["line"], default="")
+        return [t for t in turns if t["line"]]
 
     fountain: list[dict[str, str]] = []
     lines = (text or "").splitlines()
@@ -122,6 +125,11 @@ def _scenes_from_dialogue_turns(turns: list[dict[str, str]]) -> list[dict[str, A
 def clean_markdown_inline(text: str) -> str:
     """Strip markdown formatting tokens (#, *, **, quotes, screenplay labels) from a single-line title or field."""
     s = re.sub(r"^#+\s*", "", (text or "").strip())
+    s = re.sub(
+        r"(?i)\b(?:\d+\s*-?\s*(?:sec|second|seconds|min|minute|minutes|s)\s*)?(?:screenplay|script|video|animation)?\s*(?:guide|guideline|guidelines|instruction|instructions|breakdown|prompt|template|spec|specification|structure)\b[:\-]?\s*",
+        "",
+        s,
+    )
     s = re.sub(r"^(?:SCREENPLAY\s*:|TITLE\s*:|SCENE\s*\d*\s*[:\-]?)\s*", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)
     s = re.sub(r"\*([^*]+)\*", r"\1", s)

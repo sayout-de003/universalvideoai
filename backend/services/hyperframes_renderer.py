@@ -401,6 +401,27 @@ function drawPixarCharacter(ctx, cx, cy, scale, t) {
     ctx.arc(23.0, -3.5, 1.1, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  // Eyebrows
+  ctx.strokeStyle = "#475569";
+  ctx.lineWidth = 2.0;
+  ctx.beginPath();
+  ctx.moveTo(6, -11);
+  ctx.quadraticCurveTo(12, -14, 17, -11);
+  ctx.moveTo(19, -11);
+  ctx.quadraticCurveTo(24, -13, 27, -10);
+  ctx.stroke();
+
+  // Animated expressive mouth on face
+  const pixarTalk = Math.abs(Math.sin(t * 8.0));
+  ctx.fillStyle = "#1e1b4b";
+  ctx.beginPath();
+  ctx.ellipse(15, 12, 5.5, Math.max(1.8, pixarTalk * 4.5), 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#9a3412";
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+
   ctx.restore();
 
   // Front arm
@@ -948,6 +969,504 @@ function drawRobotCharacter(ctx, cx, cy, scale, t, p) {
   ctx.restore();
 }
 
+function drawDialogueSpeakerCharacter(ctx, cx, cy, scale, t, p, cfg) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale, scale);
+
+  const breath = Math.sin(t * 2.5 + (cfg.seed || 0)) * 1.8;
+  const isSpeaking = Boolean(cfg.isSpeaking);
+  const nod = isSpeaking ? Math.sin(t * 4.6) * 0.05 : Math.sin(t * 1.8 + (cfg.seed || 0)) * 0.02;
+  const turnAngle = cfg.turnAngle || 0;
+
+  // 1. High-Back Ergonomic Executive Office Chair (behind character)
+  ctx.save();
+  ctx.fillStyle = "#0b0f19";
+  ctx.strokeStyle = "#1e293b";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.roundRect(-36, -75, 72, 92, 16);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#1e293b";
+  ctx.beginPath();
+  ctx.roundRect(-30, -68, 60, 80, 10);
+  ctx.fill();
+  ctx.fillStyle = "#0f172a";
+  ctx.strokeStyle = "#64748b";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(-22, -92, 44, 18, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // 2. Seated Torso & Clothing
+  ctx.save();
+  const torsoGrad = ctx.createLinearGradient(-30, -28, 30, 42);
+  torsoGrad.addColorStop(0, cfg.rim || "#93c5fd");
+  torsoGrad.addColorStop(0.32, cfg.suit || "#1e3a8a");
+  torsoGrad.addColorStop(1, "#0f172a");
+  ctx.fillStyle = torsoGrad;
+  ctx.beginPath();
+  ctx.roundRect(-28, -26 - breath * 0.4, 56, 56, 18);
+  ctx.fill();
+
+  // Crisp Inner Shirt / Blouse & Lapels
+  ctx.fillStyle = cfg.shirt || "#f8fafc";
+  ctx.beginPath();
+  ctx.moveTo(-10, -26 - breath * 0.4);
+  ctx.lineTo(10, -26 - breath * 0.4);
+  ctx.lineTo(6, 4);
+  ctx.lineTo(-6, 4);
+  ctx.closePath();
+  ctx.fill();
+
+  // Tie or Necklace / Details
+  if (cfg.tie) {
+    ctx.fillStyle = cfg.tie;
+    ctx.beginPath();
+    ctx.moveTo(-3, -22);
+    ctx.lineTo(3, -22);
+    ctx.lineTo(4, 16);
+    ctx.lineTo(0, 22);
+    ctx.lineTo(-4, 16);
+    ctx.closePath();
+    ctx.fill();
+  } else if (cfg.necklace) {
+    ctx.strokeStyle = cfg.necklace;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, -18, 9, 0.2, Math.PI - 0.2);
+    ctx.stroke();
+    ctx.fillStyle = "#fbbf24";
+    ctx.beginPath();
+    ctx.arc(0, -9, 2.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Lapel collars
+  ctx.strokeStyle = cfg.rim || "#60a5fa";
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(-22, -26);
+  ctx.lineTo(-6, 4);
+  ctx.lineTo(0, 18);
+  ctx.moveTo(22, -26);
+  ctx.lineTo(6, 4);
+  ctx.lineTo(0, 18);
+  ctx.stroke();
+  ctx.restore();
+
+  // 3. Arms & Conversational Gestures
+  ctx.save();
+  // Left Arm (rests naturally on table)
+  ctx.fillStyle = cfg.suit || "#1e3a8a";
+  ctx.beginPath();
+  ctx.roundRect(-34, -14, 14, 42, 7);
+  ctx.fill();
+  ctx.fillStyle = "#fed7aa";
+  ctx.beginPath();
+  ctx.ellipse(-26, 28, 8, 5.5, -0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Right Arm (expressive gesture if speaking, resting/listening if not)
+  ctx.save();
+  if (isSpeaking) {
+    ctx.translate(22, -14);
+    ctx.rotate(0.35 + Math.sin(t * 4.6) * 0.18);
+    ctx.fillStyle = cfg.suit || "#1e3a8a";
+    ctx.beginPath();
+    ctx.roundRect(-6, 0, 14, 38, 7);
+    ctx.fill();
+    ctx.translate(1, 34);
+    ctx.rotate(-0.85 + Math.sin(t * 4.6) * 0.12);
+    ctx.fillStyle = cfg.suit || "#1e3a8a";
+    ctx.beginPath();
+    ctx.roundRect(-5, 0, 12, 32, 6);
+    ctx.fill();
+    ctx.translate(1, 30);
+    ctx.fillStyle = "#fed7aa";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 9, 7, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#fba562";
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(-4, 0); ctx.lineTo(-6, -6);
+    ctx.moveTo(0, 0); ctx.lineTo(0, -8);
+    ctx.moveTo(4, 0); ctx.lineTo(5, -7);
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = cfg.suit || "#1e3a8a";
+    ctx.beginPath();
+    ctx.roundRect(20, -14, 14, 42, 7);
+    ctx.fill();
+    ctx.fillStyle = "#fed7aa";
+    ctx.beginPath();
+    ctx.ellipse(26, 28, 8, 5.5, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // 4. Head & Face
+  ctx.save();
+  ctx.translate(0, -52 - breath * 0.5);
+  ctx.rotate(nod + turnAngle * 0.3);
+
+  const headGrad = ctx.createRadialGradient(-8, -10, 5, 0, 0, 32);
+  headGrad.addColorStop(0, "#fed7aa");
+  headGrad.addColorStop(0.68, "#fb923c");
+  headGrad.addColorStop(1, "#c2410c");
+  ctx.fillStyle = headGrad;
+  ctx.beginPath();
+  ctx.arc(0, 0, 28, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = cfg.hair || "#0f172a";
+  ctx.beginPath();
+  if (cfg.name === "Maya") {
+    ctx.arc(0, -6, 31, Math.PI * 0.9, Math.PI * 2.1);
+    ctx.quadraticCurveTo(28, 18, 26, 34);
+    ctx.quadraticCurveTo(16, 28, 12, 18);
+    ctx.quadraticCurveTo(-14, 20, -26, 34);
+    ctx.quadraticCurveTo(-28, 16, -30, -6);
+  } else if (cfg.name === "Liam") {
+    ctx.arc(-2, -6, 29, Math.PI * 0.95, Math.PI * 2.05);
+    ctx.quadraticCurveTo(22, -34, -18, -30);
+  } else {
+    ctx.arc(-3, -8, 29, Math.PI * 0.95, Math.PI * 2.05);
+    ctx.quadraticCurveTo(18, -36, -18, -32);
+  }
+  ctx.fill();
+
+  // Eyebrows (Earnest / concerned expressions about layoffs)
+  ctx.strokeStyle = "#334155";
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  const browRaise = isSpeaking ? Math.sin(t * 4.6) * 1.5 : 0;
+  ctx.moveTo(-18, -11 - browRaise);
+  ctx.quadraticCurveTo(-11, -16 - browRaise, -4, -12 - browRaise);
+  ctx.moveTo(4, -12 - browRaise);
+  ctx.quadraticCurveTo(11, -16 - browRaise, 18, -11 - browRaise);
+  ctx.stroke();
+
+  // Expressive Eyes with natural blinking & gaze direction
+  const blinkCycle = (t % 3.6 + (cfg.seed || 0) * 0.5) % 3.6;
+  const blink = blinkCycle > 3.42 ? 0.12 : 1.0;
+  const gazeX = cfg.turnAngle > 0 ? 2.5 : (cfg.turnAngle < 0 ? -2.5 : 0);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.ellipse(-11, -2, 6.2, 7.2 * blink, 0, 0, Math.PI * 2);
+  ctx.ellipse(11, -2, 6.2, 7.2 * blink, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (blink > 0.3) {
+    ctx.fillStyle = cfg.eyeColor || "#1e293b";
+    ctx.beginPath();
+    ctx.arc(-11 + gazeX, -2, 3.4, 0, Math.PI * 2);
+    ctx.arc(11 + gazeX, -2, 3.4, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(-10 + gazeX, -3.5, 1.3, 0, Math.PI * 2);
+    ctx.arc(12 + gazeX, -3.5, 1.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (cfg.glasses) {
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.roundRect(-19, -8, 16, 13, 3);
+    ctx.roundRect(3, -8, 16, 13, 3);
+    ctx.moveTo(-3, -2); ctx.lineTo(3, -2);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = "rgba(154, 52, 18, 0.4)";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(0, -3);
+  ctx.lineTo(2, 5);
+  ctx.lineTo(-2, 7);
+  ctx.stroke();
+
+  // 5. AUTHENTIC ANIMATED MOUTH / VISEMES (Accurately positioned at y = 14)
+  if (isSpeaking) {
+    const talkCadence = Math.max(0, Math.sin(t * 4.2));
+    const syllableWave = Math.abs(Math.sin(t * 9.2)) * 5.2 + Math.abs(Math.cos(t * 14.8)) * 2.2;
+    const mouthOpen = Math.max(2.0, syllableWave * talkCadence);
+    const mouthWidth = 7.0 + talkCadence * 2.5;
+
+    ctx.fillStyle = "#1e1b4b";
+    ctx.beginPath();
+    ctx.ellipse(0, 14, mouthWidth, mouthOpen, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (mouthOpen > 3.5) {
+      ctx.fillStyle = "#f8fafc";
+      ctx.fillRect(-mouthWidth * 0.6, 14 - mouthOpen + 0.8, mouthWidth * 1.2, 2.4);
+      ctx.fillStyle = "#f43f5e";
+      ctx.beginPath();
+      ctx.ellipse(0, 14 + mouthOpen - 1.5, mouthWidth * 0.55, 2.0, 0, 0, Math.PI);
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = "#9a3412";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.ellipse(0, 14, mouthWidth + 0.5, mouthOpen + 0.5, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = "#9a3412";
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    ctx.moveTo(-6, 14);
+    ctx.quadraticCurveTo(0, 15.8, 6, 14);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+  ctx.restore();
+}
+
+function drawConferenceRoomScene(ctx, w, h, p, t, charMeta) {
+  // 1. Sleek corporate wall & architectural downlights
+  const wallGrad = ctx.createLinearGradient(0, 0, 0, h * 0.68);
+  wallGrad.addColorStop(0, "#080d1a");
+  wallGrad.addColorStop(0.5, "#0f172a");
+  wallGrad.addColorStop(1, "#1e293b");
+  ctx.fillStyle = wallGrad;
+  ctx.fillRect(0, 0, w, h);
+
+  // 2. Floor-to-Ceiling Skyline Windows (Left 50%)
+  const winW = w * 0.52;
+  const winH = h * 0.62;
+  ctx.save();
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, winH);
+  skyGrad.addColorStop(0, "#1e3a8a");
+  skyGrad.addColorStop(0.65, "#3b82f6");
+  skyGrad.addColorStop(1, "#93c5fd");
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, winW, winH);
+
+  for (let b = 0; b < 10; b++) {
+    const bx = b * (winW / 9);
+    const bw = winW / 11;
+    const bh = winH * (0.35 + ((b * 37) % 5) * 0.08);
+    ctx.fillStyle = b % 2 === 0 ? "#1e293b" : "#0f172a";
+    ctx.fillRect(bx, winH - bh, bw, bh);
+    ctx.fillStyle = "rgba(253, 224, 71, 0.45)";
+    for (let wy = winH - bh + 12; wy < winH - 10; wy += 18) {
+      if ((b + wy) % 3 !== 0) {
+        ctx.fillRect(bx + 4, wy, bw - 8, 8);
+      }
+    }
+  }
+
+  ctx.strokeStyle = "rgba(15, 23, 42, 0.85)";
+  ctx.lineWidth = 6;
+  ctx.strokeRect(0, 0, winW, winH);
+  ctx.beginPath();
+  ctx.moveTo(winW * 0.33, 0); ctx.lineTo(winW * 0.33, winH);
+  ctx.moveTo(winW * 0.66, 0); ctx.lineTo(winW * 0.66, winH);
+  ctx.moveTo(0, winH * 0.45); ctx.lineTo(winW, winH * 0.45);
+  ctx.stroke();
+
+  const glassRef = ctx.createLinearGradient(0, 0, winW, winH);
+  glassRef.addColorStop(0, "rgba(255, 255, 255, 0.12)");
+  glassRef.addColorStop(0.3, "rgba(255, 255, 255, 0.02)");
+  glassRef.addColorStop(1, "rgba(255, 255, 255, 0.06)");
+  ctx.fillStyle = glassRef;
+  ctx.fillRect(0, 0, winW, winH);
+  ctx.restore();
+
+  // 3. Acoustic Wood Slat Accent Wall (Right 50%)
+  ctx.save();
+  ctx.fillStyle = "#111827";
+  ctx.fillRect(winW, 0, w - winW, winH);
+  for (let s = winW + 10; s < w; s += 24) {
+    ctx.fillStyle = "#451a03";
+    ctx.fillRect(s, 0, 10, winH);
+    ctx.fillStyle = "#78350f";
+    ctx.fillRect(s + 2, 0, 6, winH);
+  }
+
+  // 4. Digital Wall Display / Smart Telemetry Screen
+  const dispX = w * 0.58;
+  const dispY = h * 0.08;
+  const dispW = w * 0.38;
+  const dispH = h * 0.46;
+  ctx.fillStyle = "#030712";
+  ctx.strokeStyle = "#38bdf8";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.roundRect(dispX, dispY, dispW, dispH, 12);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "#38bdf8";
+  ctx.font = "bold 13px Inter, sans-serif";
+  ctx.fillText("● LIVE // WORKFORCE RESTRUCTURING METRICS", dispX + 16, dispY + 24);
+
+  const barColors = ["#ef4444", "#f59e0b", "#38bdf8", "#10b981"];
+  const barLabels = ["Overhead", "Impact", "Severance", "Resilience"];
+  const barValues = [0.85, 0.72, 0.60, 0.94];
+  for (let k = 0; k < 4; k++) {
+    const kx = dispX + 24 + k * (dispW / 4.4);
+    const kw = dispW / 5.5;
+    const maxBarH = dispH * 0.42;
+    const pulse = Math.sin(t * 3.0 + k) * 6;
+    const kh = Math.max(12, maxBarH * barValues[k] + pulse);
+    const ky = dispY + dispH - 42 - kh;
+    ctx.fillStyle = barColors[k];
+    ctx.beginPath();
+    ctx.roundRect(kx, ky, kw, kh, 4);
+    ctx.fill();
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "10px Inter, sans-serif";
+    ctx.fillText(barLabels[k], kx, dispY + dispH - 24);
+  }
+
+  ctx.strokeStyle = "rgba(56, 189, 248, 0.75)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let wx = 0; wx < dispW - 32; wx += 8) {
+    const waveY = dispY + dispH * 0.48 + Math.sin((wx + t * 50) * 0.06) * 14;
+    if (wx === 0) ctx.moveTo(dispX + 16 + wx, waveY);
+    else ctx.lineTo(dispX + 16 + wx, waveY);
+  }
+  ctx.stroke();
+  ctx.restore();
+
+  // 5. Three Characters Staged Around the Table
+  let activeIdx = 0;
+  const spkName = String((charMeta && charMeta.speaker_name) || "").toLowerCase();
+  if (spkName.includes("maya") || (charMeta && charMeta.speaking_index === 1)) activeIdx = 1;
+  else if (spkName.includes("liam") || (charMeta && charMeta.speaking_index === 2)) activeIdx = 2;
+  else if (charMeta && charMeta.speaking_index !== undefined) activeIdx = Number(charMeta.speaking_index) % 3;
+
+  const charScale = Math.min(w, h) / 640;
+  const charY = h * 0.58;
+  const positions = [
+    {
+      x: w * 0.22, name: "Alex", suit: "#1e3a8a", rim: "#93c5fd", shirt: "#e0f2fe", tie: "#1e40af",
+      hair: "#0f172a", turnAngle: 0.15, seed: 0,
+    },
+    {
+      x: w * 0.50, name: "Maya", suit: "#9d174d", rim: "#f472b6", shirt: "#fdf2f8", necklace: "#fbbf24",
+      hair: "#271c19", turnAngle: (activeIdx === 0 ? -0.18 : (activeIdx === 2 ? 0.18 : 0.0)), seed: 1,
+    },
+    {
+      x: w * 0.78, name: "Liam", suit: "#065f46", rim: "#6ee7b7", shirt: "#f0fdf4", glasses: true,
+      hair: "#1c1917", turnAngle: -0.15, seed: 2,
+    },
+  ];
+
+  positions.forEach((pos, idx) => {
+    const isSpeaking = (idx === activeIdx);
+    drawDialogueSpeakerCharacter(ctx, pos.x, charY, charScale * 0.88, t, p, {
+      ...pos,
+      isSpeaking: isSpeaking,
+    });
+
+    ctx.save();
+    const tagY = charY - charScale * 135;
+    ctx.font = "bold 13px Inter, sans-serif";
+    const tagText = isSpeaking ? `● ${pos.name} (talking)` : pos.name;
+    const tw = ctx.measureText(tagText).width;
+    ctx.fillStyle = isSpeaking ? "rgba(225, 29, 72, 0.94)" : "rgba(15, 23, 42, 0.80)";
+    ctx.beginPath();
+    ctx.roundRect(pos.x - tw / 2 - 12, tagY - 14, tw + 24, 24, 8);
+    ctx.fill();
+    ctx.strokeStyle = isSpeaking ? "#fda4af" : "rgba(255, 255, 255, 0.25)";
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.fillText(tagText, pos.x, tagY + 3);
+    ctx.restore();
+  });
+
+  // 6. Perspective Conference Boardroom Table (Across Foreground)
+  const tableY = h * 0.65;
+  ctx.save();
+  const tableGrad = ctx.createLinearGradient(0, tableY, 0, h);
+  tableGrad.addColorStop(0, "#1e293b");
+  tableGrad.addColorStop(0.2, "#0f172a");
+  tableGrad.addColorStop(1, "#020617");
+  ctx.fillStyle = tableGrad;
+  ctx.beginPath();
+  ctx.moveTo(0, tableY + 24);
+  ctx.quadraticCurveTo(w * 0.5, tableY - 12, w, tableY + 24);
+  ctx.lineTo(w, h);
+  ctx.lineTo(0, h);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = "#94a3b8";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(0, tableY + 24);
+  ctx.quadraticCurveTo(w * 0.5, tableY - 12, w, tableY + 24);
+  ctx.stroke();
+
+  // 7. Desk Props in front of each participant
+  positions.forEach((pos) => {
+    ctx.save();
+    const lapW = charScale * 68;
+    const lapH = charScale * 42;
+    const lapX = pos.x;
+    const lapY = tableY + 32;
+
+    ctx.fillStyle = "#1e293b";
+    ctx.strokeStyle = "#475569";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(lapX - lapW * 0.45, lapY - lapH, lapW * 0.9, lapH, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#0284c7";
+    ctx.fillRect(lapX - lapW * 0.40, lapY - lapH + 5, lapW * 0.8, lapH - 10);
+    ctx.fillStyle = "#e0f2fe";
+    for (let r = 0; r < 4; r++) {
+      ctx.fillRect(lapX - lapW * 0.36, lapY - lapH + 10 + r * 6, (lapW * 0.45) + ((r * 13) % 15), 2.5);
+    }
+
+    ctx.fillStyle = "#0f172a";
+    ctx.beginPath();
+    ctx.roundRect(lapX - lapW * 0.5, lapY, lapW, 14, 3);
+    ctx.fill();
+    ctx.stroke();
+
+    const mugX = lapX + lapW * 0.58;
+    const mugY = lapY + 4;
+    ctx.fillStyle = "#f8fafc";
+    ctx.beginPath();
+    ctx.roundRect(mugX, mugY - 18, 14, 20, 3);
+    ctx.fill();
+    ctx.strokeStyle = "#f8fafc";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(mugX + 14, mugY - 8, 4, -Math.PI / 2, Math.PI / 2);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.45)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    const steamWisp = Math.sin(t * 3.2 + pos.seed) * 3;
+    ctx.moveTo(mugX + 7, mugY - 20);
+    ctx.quadraticCurveTo(mugX + 7 + steamWisp, mugY - 30, mugX + 7 - steamWisp, mugY - 38);
+    ctx.stroke();
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
 function drawSceneCharacter(ctx, cx, cy, scale, t, p) {
   const name = ((CHARACTER_META && CHARACTER_META.name) || "").toLowerCase();
   const desc = ((CHARACTER_META && CHARACTER_META.desc) || "").toLowerCase();
@@ -974,6 +1493,21 @@ window.__renderAtTime = (t) => {
 
   if (THEME === "pixel_art") {
     drawPixelArtScene(ctx, w, h, p, t);
+    const lt = document.getElementById("lowerThird");
+    if (lt && SHOW_HUD) {
+      lt.style.opacity = Math.min(1, p * 4.0);
+      document.getElementById("bar").style.width = `${(p * 100).toFixed(1)}%`;
+    }
+    return;
+  }
+
+  const isDialogueScene = Boolean(CHARACTER_META && (CHARACTER_META.three_people || CHARACTER_META.partner || (CHARACTER_META.characters && CHARACTER_META.characters.length >= 2)));
+  const sceneDesc = ((CHARACTER_META && CHARACTER_META.desc) || "").toLowerCase();
+  const sceneName = ((CHARACTER_META && CHARACTER_META.name) || "").toLowerCase();
+  const isOfficeOrMeeting = isDialogueScene || /office|conference|meeting|boardroom|layoff|playoff|workplace|desk|indoor|interior|job layout|modern area/i.test(sceneDesc + " " + sceneName);
+
+  if (isOfficeOrMeeting) {
+    drawConferenceRoomScene(ctx, w, h, p, t, CHARACTER_META);
     const lt = document.getElementById("lowerThird");
     if (lt && SHOW_HUD) {
       lt.style.opacity = Math.min(1, p * 4.0);
