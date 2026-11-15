@@ -142,6 +142,11 @@ Once connected, Antigravity can invoke these tools directly:
 - **Multi-Engine Screenplay Orchestration**:
   - `studio_orchestrate_screenplay` — Route every shot in a screenplay to `ai_video`, `blender`, `remotion`, `licensed_footage`, or `hybrid` (`blender` + `remotion`) and optionally render all shots.
   - `studio_regenerate_shot` — Regenerate a single shot (with optional engine or prompt override) while preserving all other shot assets.
+- **Lemo-Opuscar 99 Code-Drawn Film Styles**:
+  - `opuscar_list_styles` — List or search all 99 Lemo-Opuscar film styles by category or keyword (e.g. `neon-tubes`, `impasto`, `ukiyoe`, `satellite-briefing`, `exploded-teardown`).
+  - `opuscar_get_style` — Load the full `STYLE.md` invariants, `DEMO.md`, `style.json`, and `DIRECTOR.md`/`TECHNIQUE.md` guide paths for any style.
+  - `opuscar_render_page` — Render a Lemo-Opuscar HTML/Canvas/WebGL film folder (`index.html` with `window.READY` and `window.render(t)`) to MP4.
+  - **Antigravity Skill**: Installed in `plugins/universal-video-studio/skills/lemo-opuscar/SKILL.md`, `.agents/skills/lemo-opuscar/SKILL.md`, and `~/.gemini/config/skills/lemo-opuscar/SKILL.md`.
 
 ---
 

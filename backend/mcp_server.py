@@ -9,6 +9,7 @@ from typing import Any
 
 from backend.db import init_db
 from backend.integrations.blender_adapter import apply_animation_and_export, render_blender_scene
+from backend.integrations.lemo_opuscar_adapter import lemo_opuscar_adapter
 from backend.models import ProjectCreateRequest
 from backend.orchestration.director import create_project, get_project_detail, run_production
 from backend.orchestration.shot_orchestrator import plan_screenplay_shots, regenerate_shot, render_single_shot
@@ -109,6 +110,37 @@ TOOLS = [
             "required": ["project_id", "shot_id"],
         },
     },
+    {
+        "name": "opuscar_list_styles",
+        "description": "List or search the 99 Lemo-Opuscar code-drawn film styles by category or keyword.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"category": {"type": "string"}, "query": {"type": "string"}},
+        },
+    },
+    {
+        "name": "opuscar_get_style",
+        "description": "Fetch the full STYLE.md invariants, DEMO.md, metadata, and guide paths for a Lemo-Opuscar film style.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"slug_or_name": {"type": "string"}},
+            "required": ["slug_or_name"],
+        },
+    },
+    {
+        "name": "opuscar_render_page",
+        "description": "Render a Lemo-Opuscar HTML/Canvas/WebGL film directory (index.html with window.READY & window.render(t)) to MP4.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "page_dir": {"type": "string"},
+                "output_mp4": {"type": "string"},
+                "fps": {"type": "integer"},
+                "size": {"type": "string"},
+            },
+            "required": ["page_dir", "output_mp4"],
+        },
+    },
 ]
 
 
@@ -172,6 +204,17 @@ def handle_tool_call(name: str, args: dict[str, Any]) -> Any:
             shot_id=args["shot_id"],
             engine_override=args.get("engine_override"),
             description_override=args.get("description_override"),
+        )
+    if name == "opuscar_list_styles":
+        return lemo_opuscar_adapter.list_styles(category=args.get("category"), query=args.get("query"))
+    if name == "opuscar_get_style":
+        return lemo_opuscar_adapter.get_style(args["slug_or_name"])
+    if name == "opuscar_render_page":
+        return lemo_opuscar_adapter.render_page_to_video(
+            page_dir=Path(args["page_dir"]),
+            output_mp4=Path(args["output_mp4"]),
+            fps=int(args.get("fps", 24)),
+            size=str(args.get("size", "1280x720")),
         )
     raise ValueError(f"Unknown tool: {name}")
 

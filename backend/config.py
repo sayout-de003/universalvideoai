@@ -16,6 +16,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 INTEGRATIONS_DIR = ROOT_DIR / "integrations"
 OPENMONTAGE_DIR = INTEGRATIONS_DIR / "OpenMontage"
 OPENWHISPR_DIR = INTEGRATIONS_DIR / "openwhispr"
+LEMO_OPUSCAR_DIR = INTEGRATIONS_DIR / "lemo-opuscar"
 PROJECTS_DIR = ROOT_DIR / "projects"
 MEDIA_LIBRARY_DIR = ROOT_DIR / "media_library"
 MODEL_CACHE_DIR = ROOT_DIR / "model_cache"

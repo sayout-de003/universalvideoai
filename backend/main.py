@@ -89,6 +89,7 @@ def health() -> dict[str, Any]:
         "openmontage_available": openmontage_adapter.is_available(),
         "openwhispr": openwhispr_adapter.get_status(),
         "voicestudio": __import__("backend.integrations.voicestudio_adapter", fromlist=["voicestudio_adapter"]).voicestudio_adapter.get_status(),
+        "lemo_opuscar": __import__("backend.integrations.lemo_opuscar_adapter", fromlist=["lemo_opuscar_adapter"]).lemo_opuscar_adapter.get_status(),
     }
 
 
@@ -537,4 +538,19 @@ def api_human_approve_qa(project_id: str, payload: dict[str, Any]) -> dict[str, 
 def api_list_characters_3d(project_id: str) -> dict[str, Any]:
     from backend.services.character_asset_service import list_character_assets
     return {"project_id": project_id, "characters_3d": list_character_assets(project_id)}
+
+
+@app.get("/api/opuscar/styles")
+def api_list_opuscar_styles(category: str | None = None, query: str | None = None) -> dict[str, Any]:
+    from backend.integrations.lemo_opuscar_adapter import lemo_opuscar_adapter
+    return lemo_opuscar_adapter.list_styles(category=category, query=query)
+
+
+@app.get("/api/opuscar/styles/{slug_or_name}")
+def api_get_opuscar_style(slug_or_name: str) -> dict[str, Any]:
+    from backend.integrations.lemo_opuscar_adapter import lemo_opuscar_adapter
+    res = lemo_opuscar_adapter.get_style(slug_or_name)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Style not found"))
+    return res
 

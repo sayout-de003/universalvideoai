@@ -131,7 +131,8 @@ def test_scenario_antigravity_plugin_and_mcp_server():
     assert (plugin_root / "plugin.json").exists()
     assert (plugin_root / "mcp_config.json").exists()
     assert (plugin_root / "hooks.json").exists()
-    assert len(list((plugin_root / "skills").glob("*/SKILL.md"))) == 19
+    assert len(list((plugin_root / "skills").glob("*/SKILL.md"))) >= 20
+    assert (plugin_root / "skills" / "lemo-opuscar" / "SKILL.md").exists()
     assert len(list((plugin_root / "agents").glob("*.md"))) == 22
 
     # Smoke test stdio MCP server
@@ -139,13 +140,17 @@ def test_scenario_antigravity_plugin_and_mcp_server():
         json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
         json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
         json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "studio_list_formats", "arguments": {}}}),
+        json.dumps({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "opuscar_list_styles", "arguments": {"query": "neon"}}}),
     ]) + "\n"
     proc = subprocess.run(
         [".venv/bin/python", "-m", "backend.mcp_server"],
         input=reqs, text=True, capture_output=True, timeout=15, check=True,
     )
     lines = [json.loads(ln) for ln in proc.stdout.strip().splitlines()]
-    assert len(lines) == 3
+    assert len(lines) == 4
     assert lines[0]["result"]["serverInfo"]["name"] == "universal-video-studio"
-    assert len(lines[1]["result"]["tools"]) >= 14
+    assert len(lines[1]["result"]["tools"]) >= 17
+    opuscar_res = json.loads(lines[3]["result"]["content"][0]["text"])
+    assert opuscar_res["total"] >= 1
+    assert any(s["slug"] == "neon-tubes" for s in opuscar_res["styles"])
     assert len(json.loads(lines[2]["result"]["content"][0]["text"])["formats"]) == 25

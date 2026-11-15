@@ -15,6 +15,9 @@ fi
 if [ ! -d "integrations/voicestudio/.git" ]; then
   git clone --depth 1 https://github.com/debpalash/voicestudio.git integrations/voicestudio
 fi
+if [ ! -d "integrations/lemo-opuscar/.git" ]; then
+  git clone --depth 1 https://github.com/lemomo-ai/lemo-opuscar.git integrations/lemo-opuscar
+fi
 
 echo "==> Setting up Python virtual environment..."
 python3 -m venv .venv
@@ -27,9 +30,12 @@ npm install
 npm run build
 cd "$ROOT_DIR"
 
-echo "==> Setting up Remotion Composer..."
+echo "==> Setting up Remotion Composer & Lemo-Opuscar..."
 if [ -d "integrations/OpenMontage/remotion-composer" ]; then
   (cd integrations/OpenMontage/remotion-composer && npm install)
+fi
+if [ -d "integrations/lemo-opuscar" ]; then
+  (cd integrations/lemo-opuscar && npm install --no-audit --no-fund)
 fi
 
 echo "==> Ensuring default licensed 3D humanoid asset..."
