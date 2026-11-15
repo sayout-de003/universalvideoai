@@ -53,25 +53,16 @@ def _extract_subject(prompt: str) -> str:
     parsed = parse_structured_screenplay(prompt)
     if parsed.get("subject") and not str(parsed["subject"]).lower().startswith("untitled"):
         sub = clean_markdown_inline(str(parsed["subject"]))
-        if sub and len(sub) >= 2:
-            return sub[:80]
+        # Strip prompt wrappers from parsed subject if any
+        sub_cleaned = _strip_prompt_framing(sub)
+        if sub_cleaned and len(sub_cleaned) >= 2:
+            return sub_cleaned[:80]
 
     first_line = prompt.strip().splitlines()[0] if prompt.strip() else ""
     s = clean_markdown_inline(first_line)
     s = re.sub(r"^[#*\s]+(?:screenplay\s*:\s*)?", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\*Format:.*$", "", s, flags=re.IGNORECASE).split("*")[0].split("|")[0].strip()
-    s = re.sub(
-        r"^.*?\b(?:short\s+film|feature\s+film|documentary|video|film|reel|short|commercial|ad|explainer|trailer|course|story|screenplay)\s*(?::|about|on|for|of)\s*",
-        "",
-        s,
-        flags=re.IGNORECASE,
-    )
-    s = re.sub(
-        r"^(?:i want to (?:create|make|produce)|create|make|produce|generate|build)\s+(?:a|an|the)?\s*",
-        "",
-        s,
-        flags=re.IGNORECASE,
-    )
+    s = _strip_prompt_framing(s)
     s = re.sub(r"\b\d+\s*-\s*(?:second|sec|minute|min|hour|hr)s?\b", " ", s, flags=re.IGNORECASE)
     s = re.sub(
         r"\b(?:faceless|youtube|shorts?|reels?|explaining|explain|word-by-word|captions?)\b",
@@ -85,6 +76,20 @@ def _extract_subject(prompt: str) -> str:
         s = _short_subject(s, max_words=4)
     cleaned_first = clean_markdown_inline(first_line).strip().rstrip(".!?")
     return clean_markdown_inline(s if len(s) >= 3 else cleaned_first)[:90] or "Cinematic Production"
+
+
+def _strip_prompt_framing(raw: str) -> str:
+    s = raw.strip()
+    s = re.sub(r"^(?:i want to (?:create|make|produce)|create|make|produce|generate|build|write|tell)\s+(?:an?|the)?\s*", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"^\b\d+\s*-\s*(?:second|sec|minute|min|hour|hr)s?\b\s*", "", s, flags=re.IGNORECASE)
+    s = re.sub(
+        r"^(?:(?:cinematic|historical|educational|epic|dramatic|documentary|animated|pixar|short|long-form|youtube|viral|3d|2d|sci-fi)\s+)*(?:video|film|screenplay|story|animation|explainer|reel|short|documentary)?\s*(?:about|on|for|of|regarding|exploring)?\s*",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
+    s = re.sub(r"^(?:on|about|for|of)\s+", "", s, flags=re.IGNORECASE).strip()
+    return s
 
 
 def _short_subject(subject: str, max_words: int = 4) -> str:
@@ -348,15 +353,15 @@ def _build_specialist_scenes_offline(
                 shot, cam, light = "medium", "eye_level", "bright_studio"
         elif wtype in ("fiction_short_film", "animation_piece"):
             if i == 0:
-                narr = f"Before the warning bell faded, {s_label} launched into motion."
+                narr = f"Before the first strike fell, {s_label} launched into decisive action."
                 vis = f"Pixar-grade 2D/3D animated wide establishing shot of {subject}: expressive lead character in motion, volumetric atmosphere, warm key light against cool shadows."
                 shot, cam, light = "wide", "low_angle", "moody_practical"
             elif i == num_scenes - 1:
-                narr = f"As dust settles over {s_label}, the mission is complete."
+                narr = f"As the final challenge settled, the lasting legacy of {s_label} was forged."
                 vis = f"Heroic resting wide composition of the protagonist inside {subject}, breathing settling, golden rim light and atmospheric particles."
                 shot, cam, light = "medium_wide", "eye_level", "soft_cinematic_key"
             else:
-                narr = fact_line or f"At beat {i}, {s_label} powers through {surface_angle} without slowing."
+                narr = fact_line or f"At beat {i}, {s_label} confronts {surface_angle} head on."
                 vis = f"Expressive 2D/3D character acting and dynamic camera track through {subject}: articulated stride, parallax foreground/background planes, dramatic side key light."
                 shot, cam, light = "medium", "eye_level", "dramatic_side_key"
         else:

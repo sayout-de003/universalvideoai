@@ -32,6 +32,8 @@ interface Props {
 
 const VISUAL_STYLES = [
   { id: "", label: "Let AI decide", note: "Matches visual style from your prompt & references" },
+  { id: "anime", label: "Anime / Manga", note: "Cel-shaded characters, dramatic eyes & hair, speed lines, cinematic anime lighting" },
+  { id: "cartoon_2d", label: "Classic 2D Cartoon", note: "Bold ink outlines, squash & stretch bounce, expressive cartoon eyes & gloves" },
   { id: "3d_stylized", label: "3D Stylized (Blender)", note: "Rigged 3D characters, PBR lighting, Headless Blender / Three.js" },
   { id: "2d_illustrated", label: "2D Illustrated", note: "Vector & cel-shaded character animation, HyperFrames / Remotion" },
   { id: "pixel_art", label: "Pixel Art", note: "Crisp 16-bit sprites, stepped palette, LibreSprite / Canvas" },

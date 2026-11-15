@@ -68,30 +68,24 @@ def sanitize_spoken_voiceover(raw_text: str, default: str = "Silence.") -> str:
 
     # If text is solely a header / screenplay banner / scene label with no dialogue, never speak it
     if re.match(r"^(?:#+\s*)*(?:SCREENPLAY|SCENE|ACT|EPISODE|CHAPTER|PART)\b", text, flags=re.IGNORECASE):
-        if not re.search(r"\b(?:NARRATION|VO|SPOKEN|DIALOGUE)\b", text, flags=re.IGNORECASE):
+        if not re.search(r"\b(?:NARRATION|VO|SPOKEN|DIALOGUE|NARRATOR)\b", text, flags=re.IGNORECASE):
             return default
 
-    # Normalize single-line pasted screenplay text where ## SCENE or **VISUAL:** lack newlines
+    # Normalize screenplay text so each field starts on its own line
     normalized = re.sub(r"\s*(##+\s*SCENE\s+\d+)", r"\n\1", text, flags=re.IGNORECASE)
     normalized = re.sub(
-        r"\s*(\*\*(?:VISUAL|CAMERA|LIGHTING|NARRATION\s*/?\s*VO|NARRATION|VO|ON-SCREEN\s+TEXT|SOUND|AUDIO|DIALOGUE|SPEECH)\s*:\*\*)",
+        r"\s*((?:\*\*)?(?:VISUAL|CAMERA|LIGHTING|NARRATION\s*/?\s*VO|NARRATION|VO|ON-SCREEN\s+TEXT|SOUND|AUDIO|DIALOGUE|SPEECH|NARRATOR)(?:\s*\([^)]*\))?(?:\*\*)?\s*:)",
         r"\n\1",
         normalized,
         flags=re.IGNORECASE,
     )
 
-    # 1. If explicit NARRATION/VO/DIALOGUE tags exist, isolate only their spoken contents
+    # 1. If explicit NARRATION/VO/DIALOGUE/NARRATOR tags exist, isolate only their spoken contents
     vo_matches = re.findall(
-        r"\*\*(?:NARRATION\s*/?\s*VO|NARRATION|VO|DIALOGUE|SPOKEN|SPEECH)(?:\s*\([^)]*\))?\s*:\*\*\s*(.*?)(?=\n\*\*[A-Z/\s-]+\s*:\*\*|\n##|\Z)",
+        r"(?:^|\n)\s*(?:\*\*)?(?:NARRATION\s*/?\s*VO|NARRATION|VO|DIALOGUE|SPOKEN|SPEECH|NARRATOR)(?:\s*\([^)]*\))?(?:\*\*)?\s*:\s*(.*?)(?=\n(?:\*\*)?[A-Za-z0-9_\s/-]{2,30}(?:\*\*)?\s*:|\n##|\Z)",
         normalized,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    if not vo_matches:
-        vo_matches = re.findall(
-            r"(?:^|\n)\s*(?:NARRATION\s*/?\s*VO|NARRATION|VO|DIALOGUE|SPOKEN|SPEECH|NARRATOR)(?:\s*\([^)]*\))?\s*:\s*(.*?)(?=\n[A-Z/\s-]+:|\n##|\Z)",
-            normalized,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
 
     if vo_matches:
         text = " ".join(m.strip() for m in vo_matches if m.strip())

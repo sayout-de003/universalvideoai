@@ -30,3 +30,35 @@ If the user wants the visual multitrack editor, Backlot monitor, storyboard, or 
 ```bash
 ./scripts/run_studio.sh
 ```
+
+## 4. Claude Animation Skills Suite
+
+The studio integrates 9 open-source Claude Animation Skills for deterministic code-driven and hand-drawn animation:
+
+| Skill | Tech | Use Case |
+|---|---|---|
+| **HandDraw** | Remotion + SVG + Edge TTS | Whiteboard & hand-drawn explainer videos |
+| **ClaudeAnimationBase** | p5.js + p5.brush | Hand-painted cartoon character acting (Clawd, 31 emotions) |
+| **Claude Drawing Skill** | Python (numpy + Pillow) | 83 procedural illustration styles & draw-on timelapses |
+| **AniDoodle** | Canvas / WebGL / Web Audio | 32 code-drawn styles with acoustic scores |
+| **Motion Skill** | Prompt Compiler + Kling/Nano Banana | Retro collage-style animated videos |
+| **Motion Design** | Rules / LottieFiles | Disney animation principles & easing review |
+| **Manim Skill** | Manim CE / Python | 3Blue1Brown mathematical & educational animations |
+| **JavaScript Animation** | HTML5 Canvas + Web Audio | Zero-asset canvas films with code-synthesized audio |
+| **Huashu Art Motion** | Canvas / Multi-track | 36 traditional & contemporary art styles, 9 grammars |
+
+### CLI Commands:
+```bash
+# List all 9 skills and readiness
+PYTHONPATH=. .venv/bin/python -m backend.cli animation list
+
+# List all 83 Claude Drawing styles
+PYTHONPATH=. .venv/bin/python -m backend.cli animation styles
+
+# Procedurally render in any style (e.g. blueprint, artdeco, ukiyo-e)
+PYTHONPATH=. .venv/bin/python -m backend.cli animation draw blueprint output.png
+
+# Review an animation plan for timing & Disney principles
+PYTHONPATH=. .venv/bin/python -m backend.cli animation review --timing 0.8 --easing easeInOut
+```
+
