@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -57,6 +58,81 @@ def resolve_neural_voice(voice_id: str = "default", language: str = "en") -> tup
     return edge_voice, gender
 
 
+def sanitize_spoken_voiceover(raw_text: str) -> str:
+    """Sanitize raw text for TTS voice-over so that markdown formatting, scene headers,
+    visual descriptions, camera cues, and technical metadata are NEVER read aloud.
+    Only pure human dialogue and narration are spoken."""
+    text = (raw_text or "").strip()
+    if not text:
+        return "Silence."
+
+    # Normalize single-line pasted screenplay text where ## SCENE or **VISUAL:** lack newlines
+    normalized = re.sub(r"\s*(##+\s*SCENE\s+\d+)", r"\n\1", text, flags=re.IGNORECASE)
+    normalized = re.sub(
+        r"\s*(\*\*(?:VISUAL|CAMERA|LIGHTING|NARRATION\s*/?\s*VO|NARRATION|VO|ON-SCREEN\s+TEXT|SOUND)\s*:\*\*)",
+        r"\n\1",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+
+    # 1. If explicit NARRATION/VO tags exist, isolate only their spoken contents
+    vo_matches = re.findall(
+        r"\*\*(?:NARRATION\s*/?\s*VO|NARRATION|VO)(?:\s*\([^)]*\))?\s*:\*\*\s*(.*?)(?=\n\*\*[A-Z/\s-]+\s*:\*\*|\n##|\Z)",
+        normalized,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not vo_matches:
+        vo_matches = re.findall(
+            r"(?:^|\n)\s*(?:NARRATION\s*/?\s*VO|NARRATION|VO)(?:\s*\([^)]*\))?\s*:\s*(.*?)(?=\n[A-Z/\s-]+:|\n##|\Z)",
+            normalized,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+    if vo_matches:
+        text = " ".join(m.strip() for m in vo_matches if m.strip())
+    else:
+        # 2. Filter out screenplay metadata lines, scene titles, and visual directions
+        lines = []
+        for line in normalized.splitlines():
+            line_s = line.strip()
+            if not line_s:
+                continue
+            # Header lines (# SCREENPLAY..., ## SCENE...)
+            if re.match(r"^#+\s*", line_s):
+                continue
+            # Format/Runtime headers
+            if re.match(r"^\*?\s*Format\s*:.*?Runtime\s*:", line_s, flags=re.IGNORECASE):
+                continue
+            # Screenplay field blocks
+            if re.match(r"^\*\*(?:VISUAL|CAMERA|LIGHTING|SOUND|ON-SCREEN\s+TEXT|COMPOSITION|PROPS?|LOCATION)\s*:\*\*", line_s, flags=re.IGNORECASE):
+                continue
+            if re.match(r"^(?:VISUAL|CAMERA|LIGHTING|SOUND|ON-SCREEN\s+TEXT|COMPOSITION|PROPS?|LOCATION)\s*:", line_s, flags=re.IGNORECASE):
+                continue
+            lines.append(line_s)
+        text = " ".join(lines) if lines else text
+
+    # 3. Strip semantic moment tags @{...} and action cues
+    text = re.sub(r"@\{[^}]+\}", "", text)
+    # Strip sound cues and stage directions in brackets/parentheses
+    text = re.sub(r"\[(?:SFX|Sound|Music|Audio|Applause|Laughter|Beat|Pause|Ambient)[^\]]*\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\((?:SFX|Sound|Music|Audio|Applause|Laughter|Beat|Pause|Ambient)[^)]*\)", "", text, flags=re.IGNORECASE)
+    # Strip timing tags like (5.3s) or [5.3s]
+    text = re.sub(r"\(\s*\d+(?:\.\d+)?\s*s\s*\)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[\s*\d+(?:\.\d+)?\s*s\s*\]", "", text, flags=re.IGNORECASE)
+
+    # 4. Strip markdown tokens (#, *, _, `, ~, |, >)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    text = re.sub(r"_([^_]+)_", r"\1", text)
+    text = re.sub(r"^[#*\s>~`\-]+", "", text)
+    text = re.sub(r"[#*`~|]", "", text)
+
+    # 5. Clean up surrounding quotes and multiple spaces
+    text = re.sub(r"\s+", " ", text).strip()
+    text = text.strip('"\'“”‘’')
+    return text.strip() or "Silence."
+
+
 def generate_tts(
     text: str,
     output_wav: Path,
@@ -68,7 +144,7 @@ def generate_tts(
     from backend.orchestration.engine_registry import is_free_open_source_mode
 
     output_wav.parent.mkdir(parents=True, exist_ok=True)
-    clean_text = text.strip() or "Silence."
+    clean_text = sanitize_spoken_voiceover(text)
     free_mode = is_free_open_source_mode(production_mode)
 
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()

@@ -47,7 +47,8 @@ _DRAMATIC_PERSPECTIVES = (
 
 
 def _extract_subject(prompt: str) -> str:
-    from backend.services.document_parser import parse_structured_screenplay
+    from backend.orchestration.audio_studio import sanitize_spoken_voiceover
+    from backend.services.document_parser import clean_markdown_inline, parse_structured_screenplay
 
     parsed = parse_structured_screenplay(prompt)
     if parsed.get("subject"):
@@ -401,7 +402,8 @@ def develop_and_write_screenplay(
     production_mode: str | None = None,
 ) -> dict[str, Any]:
     """Run Story Architect -> Hollywood Screenplay Architect -> Script Doctor -> Evaluator."""
-    from backend.services.document_parser import parse_structured_screenplay
+    from backend.orchestration.audio_studio import sanitize_spoken_voiceover
+    from backend.services.document_parser import clean_markdown_inline, parse_structured_screenplay
 
     fmt_spec = get_format_spec(format_key)
     parsed_script = parse_structured_screenplay(uploaded_script or prompt)
@@ -417,6 +419,7 @@ def develop_and_write_screenplay(
         scenes = list(parsed_script["scenes"])
         author_mode = "user_structured_screenplay"
         for i, sc in enumerate(scenes):
+            sc["narration_segment"] = sanitize_spoken_voiceover(sc.get("narration_segment", ""))
             cast = _cast_voice_for_scene(i, len(scenes), fmt_spec["writer_type"], uploaded_script or prompt, voice_mode=voice_mode)
             eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"], visual_style=visual_style)
             if voice_mode in ("male", "female", "dual"):
@@ -501,10 +504,16 @@ def develop_and_write_screenplay(
             "",
         ])
 
+    char_desc = str(parsed_script.get("character_description") or "")
+    if not char_desc or "#" in char_desc or "SCENE" in char_desc or "Format:" in char_desc:
+        char_desc = f"Locked visual identity for {subject}: consistent facial features, silhouette, wardrobe, and color palette across every scene."
+    else:
+        char_desc = clean_markdown_inline(char_desc)[:240]
+
     return {
         "subject": subject,
-        "character_name": parsed_script.get("character_name") or subject[:48],
-        "character_description": parsed_script.get("character_description") or f"Locked visual identity for {subject}: consistent facial features, silhouette, wardrobe, and color palette across every scene.",
+        "character_name": clean_markdown_inline(str(parsed_script.get("character_name") or subject))[:48],
+        "character_description": char_desc,
         "format_spec": fmt_spec,
         "author_mode": author_mode,
         "logline": logline,

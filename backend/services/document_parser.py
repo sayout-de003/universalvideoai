@@ -98,7 +98,14 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
         visual = _extract_field(r"VISUAL")
         camera_raw = _extract_field(r"CAMERA")
         lighting = _extract_field(r"LIGHTING") or "dramatic_cinematic"
-        narration = _extract_field(r"NARRATION\s*/?\s*VO|NARRATION|VO")
+        raw_narration = _extract_field(r"NARRATION\s*/?\s*VO|NARRATION|VO")
+        if not raw_narration:
+            # Fallback search for unbolded or variant VO cues
+            m_alt_vo = re.search(r"(?:NARRATION\s*/?\s*VO|NARRATION|VO|SPOKEN|DIALOGUE)\s*:\s*(.*?)(?=\n[A-Z/\s-]+:|\Z)", body, flags=re.IGNORECASE | re.DOTALL)
+            raw_narration = m_alt_vo.group(1).strip() if m_alt_vo else ""
+
+        from backend.orchestration.audio_studio import sanitize_spoken_voiceover
+        narration = sanitize_spoken_voiceover(raw_narration) if raw_narration else ""
         on_screen_text = _extract_field(r"ON-SCREEN\s+TEXT|TEXT") or sc_title
         sound_cue = _extract_field(r"SOUND") or "ambient_swell"
 

@@ -381,11 +381,16 @@ def _plan_hierarchy_and_bible(
     loc_id = f"loc_{uuid.uuid4().hex[:8]}"
     prop_id = f"prp_{uuid.uuid4().hex[:8]}"
 
-    clean_char_name = str(script_pkg.get("character_name") or title)[:48]
-    clean_char_desc = str(
-        script_pkg.get("character_description")
-        or f"Consistent visual identity for {clean_char_name}: locked facial features, wardrobe, silhouette, and cinematic color grading across all {len(generated_scenes)} scenes."
-    )[:240]
+    from backend.orchestration.audio_studio import sanitize_spoken_voiceover
+    from backend.services.document_parser import clean_markdown_inline
+
+    raw_char_name = clean_markdown_inline(str(script_pkg.get("character_name") or title))
+    clean_char_name = raw_char_name.splitlines()[0][:48].strip() or "Lead Subject"
+    raw_char_desc = str(script_pkg.get("character_description") or "")
+    if not raw_char_desc or "#" in raw_char_desc or "SCENE" in raw_char_desc or "Format:" in raw_char_desc:
+        clean_char_desc = f"Consistent visual identity for {clean_char_name}: locked facial features, wardrobe, silhouette, and cinematic color grading across all {len(generated_scenes)} scenes."
+    else:
+        clean_char_desc = clean_markdown_inline(raw_char_desc)[:240]
 
     with get_conn() as conn:
         conn.execute(
@@ -434,7 +439,8 @@ def _plan_hierarchy_and_bible(
             )
             for s_i, sc_spec in enumerate(chap_scenes):
                 scene_id = f"sc_{uuid.uuid4().hex[:8]}"
-                narration = plain_paragraphs[scene_idx_global] if scene_idx_global < len(plain_paragraphs) else sc_spec["narration_segment"]
+                raw_narr = plain_paragraphs[scene_idx_global] if scene_idx_global < len(plain_paragraphs) else sc_spec["narration_segment"]
+                narration = sanitize_spoken_voiceover(raw_narr)
                 raw_sc_title = str(sc_spec["title"]).strip()
                 scene_title = raw_sc_title if raw_sc_title.lower().startswith("scene ") else f"Scene {scene_idx_global + 1}: {raw_sc_title}"
                 vis_desc = sc_spec["visual_description"]

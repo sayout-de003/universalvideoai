@@ -82,4 +82,15 @@ export const studioClient = {
     fd.append("file", file);
     return req<Record<string, unknown>>(`/api/projects/${projectId}/upload`, { method: "POST", body: fd });
   },
+  hypitAuthor: (script: string) => req<Record<string, unknown>>("/api/v1/hypit/author", { method: "POST", body: JSON.stringify({ script }) }),
+  hypitCloneReference: (referenceVideo: string, prompt: string, durationSec?: number) =>
+    req<Record<string, unknown>>("/api/v1/hypit/clone-reference", {
+      method: "POST",
+      body: JSON.stringify({ reference_video: referenceVideo, prompt, target_duration_sec: durationSec }),
+    }),
+  hypitVariants: (projectId: string, variants: Array<Record<string, unknown>>) =>
+    req<Record<string, unknown>>("/api/v1/hypit/variants", {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId, variants }),
+    }),
 };

@@ -188,6 +188,40 @@ TOOLS = [
             "required": ["issue_description", "master_prompt"],
         },
     },
+    {
+        "name": "studio_author_semantic_video",
+        "description": "Parse SVML or semantic script into segments, speaker roles, semantic moments (@{reveal}), and token-level timing with clean dialogue extraction.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"script": {"type": "string"}},
+            "required": ["script"],
+        },
+    },
+    {
+        "name": "studio_clone_reference_video",
+        "description": "Deconstruct reference video pacing, hook timing, cut density, and visual hierarchy, producing an editable production blueprint.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "reference_video": {"type": "string"},
+                "prompt": {"type": "string"},
+                "target_duration_sec": {"type": "number"},
+            },
+            "required": ["reference_video", "prompt"],
+        },
+    },
+    {
+        "name": "studio_create_video_variants",
+        "description": "Generate production variants (voice/presenter swap, language localization, visual style, aspect ratio) while reusing unchanged renders.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "variants": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["project_id", "variants"],
+        },
+    },
     # ------------------------------------------------------------------
     # First-class Antigravity Production Tools (Shared Pipeline)
     # ------------------------------------------------------------------
@@ -457,6 +491,16 @@ def handle_tool_call(name: str, args: dict[str, Any]) -> Any:
             master_prompt=str(args["master_prompt"]),
             category=args.get("category"),
         )
+    if name == "studio_author_semantic_video":
+        from backend.services.hypit_engine import parse_semantic_script
+        return parse_semantic_script(str(args["script"]))
+    if name == "studio_clone_reference_video":
+        from backend.services.hypit_engine import analyze_and_clone_reference
+        ref = str(args.get("reference_video") or args.get("url") or "")
+        return analyze_and_clone_reference(ref, str(args["prompt"]), target_duration_sec=args.get("target_duration_sec"))
+    if name == "studio_create_video_variants":
+        from backend.services.hypit_engine import generate_production_variants
+        return generate_production_variants(str(args["project_id"]), args.get("variants") or [])
     if name == "create_production":
         req = ProjectCreateRequest(
             prompt=str(args["prompt"]),
