@@ -27,6 +27,18 @@ npm install
 npm run build
 cd "$ROOT_DIR"
 
+echo "==> Setting up Remotion Composer..."
+if [ -d "integrations/OpenMontage/remotion-composer" ]; then
+  (cd integrations/OpenMontage/remotion-composer && npm install)
+fi
+
+echo "==> Ensuring default licensed 3D humanoid asset..."
+mkdir -p media_library/characters
+if [ ! -f "media_library/characters/soldier_rigged.glb" ]; then
+  curl -fsSL "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/gltf/Soldier.glb" \
+    -o "media_library/characters/soldier_rigged.glb" || true
+fi
+
 if [ ! -f .env ]; then
   cp .env.example .env
 fi
