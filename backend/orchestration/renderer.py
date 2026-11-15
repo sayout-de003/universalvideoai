@@ -62,6 +62,11 @@ def render_scene_clip(
         "path": str(output_mp4),
         "engine_used": res.get("engine", render_engine),
         "source_type": res.get("source_type", "unknown"),
+        "provider": res.get("provider"),
+        "model": res.get("model"),
+        "job_id": res.get("job_id"),
+        "estimated_cost_usd": res.get("estimated_cost_usd"),
+        "generation_state": res.get("generation_state"),
         "provenance": res.get("provenance"),
         "motion_preset": res.get("motion_preset"),
     }

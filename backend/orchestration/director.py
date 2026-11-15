@@ -379,7 +379,18 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
             )
             with get_conn() as conn:
                 v_asset_id, a_asset_id = f"ast_{uuid.uuid4().hex[:8]}", f"ast_{uuid.uuid4().hex[:8]}"
-                conn.execute("INSERT INTO assets (id, project_id, scene_id, asset_type, provider, file_path, duration_sec, license, created_at) VALUES (?, ?, ?, 'video', ?, ?, ?, 'generated_local', ?)", (v_asset_id, project_id, sc["id"], render_res.get("engine_used", "ffmpeg"), str(scene_mp4), target_scene_dur, utc_now()))
+                clip_meta = json.dumps({
+                    "source_type": render_res.get("source_type"),
+                    "provider": render_res.get("provider"),
+                    "model": render_res.get("model"),
+                    "job_id": render_res.get("job_id"),
+                    "estimated_cost_usd": render_res.get("estimated_cost_usd"),
+                    "generation_state": render_res.get("generation_state"),
+                })
+                conn.execute(
+                    "INSERT INTO assets (id, project_id, scene_id, asset_type, provider, file_path, duration_sec, license, metadata_json, created_at) VALUES (?, ?, ?, 'video', ?, ?, ?, 'generated_local', ?, ?)",
+                    (v_asset_id, project_id, sc["id"], render_res.get("provider") or render_res.get("engine_used", "ffmpeg"), str(scene_mp4), target_scene_dur, clip_meta, utc_now()),
+                )
                 conn.execute("INSERT INTO assets (id, project_id, scene_id, asset_type, provider, file_path, duration_sec, license, created_at) VALUES (?, ?, ?, 'audio', ?, ?, ?, ?, ?)", (a_asset_id, project_id, sc["id"], tts_res.get("provider", "local"), str(scene_wav), actual_audio_dur, tts_res.get("license", "generated_local"), utc_now()))
                 conn.execute("UPDATE scenes SET duration_sec=?, visual_asset_id=?, audio_asset_id=?, rendered_clip_path=?, quality_status='generated' WHERE id=?", (target_scene_dur, v_asset_id, a_asset_id, str(scene_mp4), sc["id"]))
             sc["duration_sec"] = target_scene_dur

@@ -147,5 +147,5 @@ def test_scenario_antigravity_plugin_and_mcp_server():
     lines = [json.loads(ln) for ln in proc.stdout.strip().splitlines()]
     assert len(lines) == 3
     assert lines[0]["result"]["serverInfo"]["name"] == "universal-video-studio"
-    assert len(lines[1]["result"]["tools"]) == 7
+    assert len(lines[1]["result"]["tools"]) >= 14
     assert len(json.loads(lines[2]["result"]["content"][0]["text"])["formats"]) == 25

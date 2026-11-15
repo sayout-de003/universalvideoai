@@ -399,6 +399,37 @@ CREATE TABLE IF NOT EXISTS dependency_links (
     invalidated INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS generation_jobs (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    state TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    output_path TEXT,
+    estimated_cost_usd REAL,
+    error TEXT,
+    params_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS character_3d_assets (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    character_id TEXT REFERENCES characters(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    mesh_path TEXT NOT NULL,
+    reference_image_path TEXT,
+    rig_type TEXT NOT NULL DEFAULT 'humanoid',
+    has_armature INTEGER NOT NULL DEFAULT 0,
+    animations_json TEXT NOT NULL DEFAULT '[]',
+    shape_keys_json TEXT NOT NULL DEFAULT '[]',
+    wardrobe_spec_json TEXT NOT NULL DEFAULT '{}',
+    continuity_hash TEXT NOT NULL DEFAULT '',
+    license TEXT NOT NULL DEFAULT 'project_owned',
+    validation_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
 """
 
 

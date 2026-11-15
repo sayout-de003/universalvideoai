@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
-from backend.config import get_configured_credentials
 from backend.integrations.antigravity_adapter import AntigravityAdapter
 from backend.integrations.blender_adapter import render_blender_scene
-from backend.integrations.openmontage_adapter import openmontage_adapter
+from backend.providers.image.router import generate_cloud_image
+from backend.providers.video.router import generate_cloud_shot
 from backend.services.archival_media_service import fetch_archival_media_for_scene
 from backend.services.hyperframes_renderer import render_hyperframes_scene
 from backend.services.remotion_renderer import render_remotion_scene
@@ -63,40 +62,6 @@ def _aspect_from_size(width: int, height: int) -> str:
     if abs(width - height) <= max(width, height) * 0.08:
         return "1:1"
     return "16:9"
-
-
-def _cloud_duration(tool_name: str, duration_sec: float) -> str | int:
-    d = max(4, min(10, int(round(duration_sec))))
-    if tool_name == "veo_video":
-        return "8s" if d >= 6 else "4s"
-    if tool_name == "kling_video":
-        return "10" if d >= 8 else "5"
-    if tool_name == "runway_video":
-        return d
-    return d
-
-
-def _claim_tool_output(res: dict[str, Any], output_mp4: Path) -> bool:
-    if output_mp4.is_file() and output_mp4.stat().st_size > 1024:
-        return True
-    candidates: list[str] = []
-    artifacts = res.get("artifacts") or []
-    if isinstance(artifacts, dict):
-        candidates.extend(str(v) for v in artifacts.values())
-    elif isinstance(artifacts, list):
-        candidates.extend(str(v) for v in artifacts)
-    meta = res.get("metadata") or {}
-    if isinstance(meta, dict):
-        for key in ("output", "output_path", "path"):
-            if meta.get(key):
-                candidates.append(str(meta[key]))
-    for raw in candidates:
-        src = Path(raw)
-        if src.is_file() and src.stat().st_size > 1024:
-            if src.resolve() != output_mp4.resolve():
-                shutil.copy2(src, output_mp4)
-            return output_mp4.is_file() and output_mp4.stat().st_size > 1024
-    return False
 
 
 def get_format_visual_policy(category: str) -> dict[str, Any]:
@@ -267,39 +232,19 @@ def _try_cloud_video(
     duration_sec: float,
     prompt: str,
     aspect: str,
-) -> dict[str, Any] | None:
-    creds = get_configured_credentials()
-    tool_candidates: list[tuple[str, str]] = []
-    if creds.get("GOOGLE_API_KEY"):
-        tool_candidates.append(("veo_video", "google_veo"))
-    if creds.get("RUNWAY_API_KEY"):
-        tool_candidates.append(("runway_video", "runway"))
-    if creds.get("KLING_API_KEY") or creds.get("FAL_KEY"):
-        tool_candidates.append(("kling_video", "kling"))
-    if creds.get("ARK_API_KEY") or creds.get("FAL_KEY"):
-        tool_candidates.append(("seedance_video", "seedance"))
-    if not tool_candidates or not openmontage_adapter.is_available():
-        return None
-
-    errors: list[str] = []
-    for tool_name, provider_id in tool_candidates:
-        try:
-            res = openmontage_adapter.execute_tool(
-                tool_name,
-                {
-                    "prompt": prompt,
-                    "duration": _cloud_duration(tool_name, duration_sec),
-                    "aspect_ratio": aspect,
-                    "output_path": str(output_mp4),
-                    "operation": "text_to_video",
-                },
-            )
-            if res.get("success") and _claim_tool_output(res, output_mp4):
-                return {"ok": True, "status": "READY", "engine": provider_id, "source_type": "cloud_ai_video", "output": str(output_mp4)}
-            errors.append(f"{provider_id}: {res.get('error') or 'no output'}")
-        except Exception as exc:
-            errors.append(f"{provider_id}: {exc}")
-    return {"ok": False, "status": "UNAVAILABLE", "reason": "; ".join(errors)}
+) -> dict[str, Any]:
+    del scene
+    res = generate_cloud_shot(prompt, output_mp4, duration_sec, aspect)
+    if res.get("ok"):
+        from backend.providers.video.openmontage_video import discard_unproven_output, validate_video_with_ffprobe
+        probe = validate_video_with_ffprobe(output_mp4)
+        if not probe.get("ok"):
+            discard_unproven_output(output_mp4)
+            res["ok"] = False
+            res["status"] = "FAILED"
+            res["generation_state"] = "failed"
+            res["reason"] = probe.get("reason", "ffprobe validation failed")
+    return res
 
 
 def _try_cloud_image_kenburns(
@@ -312,37 +257,31 @@ def _try_cloud_image_kenburns(
     policy: dict[str, Any],
     motion_preset: str,
     prompt: str,
-) -> dict[str, Any] | None:
-    creds = get_configured_credentials()
-    tool_candidates: list[str] = []
-    if creds.get("GOOGLE_API_KEY"):
-        tool_candidates.append("google_imagen")
-    if creds.get("OPENAI_API_KEY"):
-        tool_candidates.append("openai_image")
-    if creds.get("FAL_KEY") or creds.get("FAL_AI_API_KEY"):
-        tool_candidates.append("flux_image")
-    if not tool_candidates or not openmontage_adapter.is_available():
-        return None
-
+) -> dict[str, Any]:
+    del scene
     img_out = output_mp4.with_suffix(".png")
-    for tool_name in tool_candidates:
-        try:
-            res = openmontage_adapter.execute_tool(tool_name, {"prompt": prompt, "output_path": str(img_out)})
-            if res.get("success") and _claim_tool_output(res, img_out):
-                kb = ken_burns_image_to_mp4(
-                    img_out, output_mp4, duration_sec, width, height, fps,
-                    motion_preset=motion_preset,
-                    color_grade=policy["color_grade"],
-                    film_grain=policy["film_grain"],
-                    vignette=policy["vignette"],
-                )
-                if kb.get("ok"):
-                    kb["engine"] = tool_name
-                    kb["source_type"] = "cloud_ai_image_kenburns"
-                    return kb
-        except Exception:
-            continue
-    return None
+    image = generate_cloud_image(prompt, img_out)
+    if not image.get("ok"):
+        return image
+    kb = ken_burns_image_to_mp4(
+        img_out, output_mp4, duration_sec, width, height, fps,
+        motion_preset=motion_preset,
+        color_grade=policy["color_grade"],
+        film_grain=policy["film_grain"],
+        vignette=policy["vignette"],
+    )
+    if not kb.get("ok"):
+        kb["provider"] = image.get("provider")
+        kb["job_id"] = image.get("job_id")
+        return kb
+    kb["engine"] = image["provider"]
+    kb["provider"] = image["provider"]
+    kb["model"] = image.get("model")
+    kb["job_id"] = image.get("job_id")
+    kb["estimated_cost_usd"] = image.get("estimated_cost_usd")
+    kb["generation_state"] = "ready"
+    kb["source_type"] = "cloud_ai_image_kenburns"
+    return kb
 
 
 def generate_shot_for_scene(

@@ -133,6 +133,9 @@ def detect_hardware() -> HardwareProfile:
         "manim", "piper", "whisper-cpp", "whisper", "ollama", "yt-dlp", "say",
     ]
     binaries = {name: shutil.which(name) is not None for name in binary_names}
+    if not binaries["blender"]:
+        from backend.integrations.blender_adapter import find_blender_binary
+        binaries["blender"] = find_blender_binary() is not None
     chromium_path = detect_chromium_path()
     binaries["chromium"] = chromium_path is not None
 

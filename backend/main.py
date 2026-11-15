@@ -23,6 +23,8 @@ from backend.config import (
 )
 from backend.db import get_conn, init_db
 from backend.integrations.openmontage_adapter import openmontage_adapter
+from backend.providers.image.router import image_provider_readiness
+from backend.providers.video.registry import video_provider_readiness
 from backend.integrations.openwhispr_adapter import openwhispr_adapter
 from backend.models import (
     DirectorChatRequest,
@@ -82,6 +84,8 @@ def health() -> dict[str, Any]:
         "settings": get_studio_settings(),
         "hardware": hw.to_dict(),
         "credentials_configured": get_configured_credentials(),
+        "video_providers": video_provider_readiness(),
+        "image_providers": image_provider_readiness(),
         "openmontage_available": openmontage_adapter.is_available(),
         "openwhispr": openwhispr_adapter.get_status(),
         "voicestudio": __import__("backend.integrations.voicestudio_adapter", fromlist=["voicestudio_adapter"]).voicestudio_adapter.get_status(),
@@ -496,4 +500,41 @@ def api_approve_gates(project_id: str, payload: dict[str, Any]) -> dict[str, Any
             raise HTTPException(status_code=400, detail=res.get("error"))
         return res
     return approve_all_mandatory_gates(project_id, notes=notes)
+
+
+@app.post("/api/projects/{project_id}/screenplay/orchestrate")
+def api_orchestrate_screenplay(project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.orchestration.shot_orchestrator import plan_screenplay_shots, render_single_shot
+    planned = plan_screenplay_shots(project_id, payload)
+    rendered = [render_single_shot(project_id, p["shot_id"]) for p in planned] if payload.get("render") else []
+    return {"planned": planned, "rendered": rendered}
+
+
+@app.post("/api/projects/{project_id}/shots/{shot_id}/regenerate")
+def api_regenerate_shot(project_id: str, shot_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    from backend.orchestration.shot_orchestrator import regenerate_shot
+    body = payload or {}
+    return regenerate_shot(
+        project_id=project_id,
+        shot_id=shot_id,
+        engine_override=body.get("engine_override"),
+        description_override=body.get("description_override"),
+    )
+
+
+@app.post("/api/projects/{project_id}/qa/human-approve")
+def api_human_approve_qa(project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.orchestration.qa import record_human_visual_approval
+    return record_human_visual_approval(
+        project_id=project_id,
+        report_id=str(payload["report_id"]),
+        approved=bool(payload.get("approved", False)),
+        reviewer_notes=str(payload.get("reviewer_notes", "")),
+    )
+
+
+@app.get("/api/projects/{project_id}/characters/3d")
+def api_list_characters_3d(project_id: str) -> dict[str, Any]:
+    from backend.services.character_asset_service import list_character_assets
+    return {"project_id": project_id, "characters_3d": list_character_assets(project_id)}
 
