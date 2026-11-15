@@ -23,6 +23,7 @@ from backend.orchestration.audio_studio import (
     generate_sfx,
     generate_subtitles,
     generate_tts,
+    sanitize_spoken_voiceover,
     mix_audio_stems,
     probe_duration,
 )
@@ -503,22 +504,42 @@ def _plan_hierarchy_and_bible(
             (narrator_female_id, project_id, "Co-Narrator & Lead (Female - AriaNeural)", "narrator_female", "edge_neural_tts", "narrator_warm", language),
         )
         character_ids: dict[str, str] = {}
-        cast_names = speakers[:2] or [clean_char_name]
-        for cast_i, cast_name in enumerate(cast_names):
+        bible_chars = script_pkg.get("character_bible") or []
+        if bible_chars:
+            cast_specs = bible_chars
+        else:
+            cast_names = speakers or [clean_char_name]
+            cast_specs = [{"name": n, "role": "protagonist" if i == 0 else f"cast_{i + 1}"} for i, n in enumerate(cast_names)]
+
+        _voice_slots = ["character_1", "character_2", "character_3", "character_4"]
+        for cast_i, c_spec in enumerate(cast_specs):
+            cast_name = str(c_spec.get("name") or f"Character {cast_i + 1}").strip()
             cast_id = char_id if cast_i == 0 else f"chr_{uuid.uuid4().hex[:8]}"
             character_ids[cast_name] = cast_id
-            voice_for_cast = "character_1" if cast_i == 0 else "character_2"
+            low_name = cast_name.lower()
+            voice_for_cast = (
+                "character_1" if low_name == "boss"
+                else ("character_2" if low_name == "employee"
+                else ("character_3" if low_name == "friend"
+                else _voice_slots[cast_i % len(_voice_slots)]))
+            )
+            wardrobe_str = ", ".join(c_spec.get("wardrobe") or []) or "Consistent signature wardrobe across all scenes"
+            props_str = ", ".join(c_spec.get("props") or [])
+            if props_str:
+                wardrobe_str = f"{wardrobe_str} | Props: {props_str}"
+            color_str = str(c_spec.get("color") or "stylized")
+            expr_str = str(c_spec.get("expression") or "expressive")
             conn.execute(
                 """INSERT INTO characters (id, project_id, name, role, visual_description, facial_features, body_proportions, clothing, personality, voice_id, voice_provider)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     cast_id, project_id, cast_name[:48],
-                    "protagonist" if cast_i == 0 else "second_lead",
-                    clean_char_desc if cast_i == 0 else f"Distinct silhouette and wardrobe from {clean_char_name}.",
-                    "Expressive eyes, clear silhouette",
-                    "Balanced proportions",
-                    "Consistent signature wardrobe across all scenes",
-                    "Engaging and memorable",
+                    str(c_spec.get("role") or ("protagonist" if cast_i == 0 else "supporting")),
+                    f"{color_str} 3D character ({cast_name}): {wardrobe_str}" if bible_chars else (clean_char_desc if cast_i == 0 else f"Distinct silhouette and wardrobe for {cast_name}."),
+                    f"Expressive eyes, {expr_str} expression",
+                    "Balanced stylized proportions",
+                    wardrobe_str,
+                    expr_str,
                     voice_for_cast,
                     "edge_neural_tts",
                 ),
@@ -564,7 +585,11 @@ def _plan_hierarchy_and_bible(
                 scene_style = visual_style or sc_spec.get("visual_style") or sc_spec.get("animation_theme") or "2d_illustrated"
                 speaker_name = str(sc_spec.get("speaker_name") or "")
                 speaking_id = character_ids.get(speaker_name) or char_id
-                dialogue_json = json.dumps([{"speaker": speaker_name or clean_char_name, "line": narration}] if narration else [])
+                turns = sc_spec.get("dialogue_turns") or sc_spec.get("dialogue") or []
+                if turns:
+                    dialogue_json = json.dumps(turns)
+                else:
+                    dialogue_json = json.dumps([{"speaker": speaker_name or clean_char_name, "line": narration}] if narration else [])
                 scene_voice = sc_spec.get("voice_id") or ("narrator_deep" if scene_idx_global % 2 == 0 else "narrator_warm")
                 scene_trans = sc_spec.get("transition") or ("smoothleft" if s_i > 0 else "cut")
                 conn.execute(
@@ -661,32 +686,65 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
         conn.execute("UPDATE production_runs SET paused=0, status='running', updated_at=? WHERE project_id=?", (utc_now(), project_id))
         conn.execute("UPDATE projects SET status='running', updated_at=? WHERE id=?", (utc_now(), project_id))
 
+    from backend.orchestration.audio_studio import generate_sfx, generate_viseme_timeline
+    from backend.services.blender_character_builder import (
+        BREAKROOM_BLEND,
+        ensure_office_cast_and_set,
+        get_character_blend_path,
+    )
+    from backend.services.screenwriting_service import validate_screenplay_completeness
+
+    # Pre-render screenplay completeness gate
+    sc_val = validate_screenplay_completeness(scenes, project.get("prompt") or "")
+    if not sc_val.get("passed", True):
+        msg = f"Screenplay validation failed before render: {sc_val.get('errors')}"
+        _log_agent_message(project_id, "Quality Assurance Agent", msg)
+        with get_conn() as conn:
+            conn.execute("UPDATE projects SET status='failed', updated_at=? WHERE id=?", (utc_now(), project_id))
+        return get_project_detail(project_id)
+
     emit_studio_event(project_id, "production_started", {"resume": resume, "scenes": len(scenes)})
-    _save_checkpoint(project_id, ProductionStage.GENERATION.value, "running", {"total_scenes": len(scenes)})
+    _save_checkpoint(project_id, ProductionStage.GENERATION.value, "running", {"total_scenes": len(scenes)}, human_approved=False)
 
     narration_wavs, sfx_cues, scenes_with_timings = [], [], []
+    all_dialogue_tracks: list[dict[str, Any]] = []
+    all_lip_sync_frames: list[dict[str, Any]] = []
     cursor_sec = 0.0
+    proj_chars = detail.get("characters") or []
+    is_office_cast = any(str(c.get("name") or "").lower() in ("boss", "employee", "friend") for c in proj_chars)
+    office_assets_ready = False
+    if is_office_cast and (project.get("visual_style") == "3d_stylized" or project.get("render_engine") == "blender"):
+        cast_res = ensure_office_cast_and_set()
+        if not cast_res.get("ok"):
+            raise RuntimeError(f"Failed to prepare 3D character assets: {cast_res.get('reason')}")
+        office_assets_ready = True
 
     for idx, sc in enumerate(scenes):
         with get_conn() as conn:
             run_row = conn.execute("SELECT paused FROM production_runs WHERE project_id=? ORDER BY started_at DESC LIMIT 1", (project_id,)).fetchone()
             if run_row and run_row["paused"]:
-                _save_checkpoint(project_id, ProductionStage.GENERATION.value, "paused", {"completed_scenes": idx})
+                _save_checkpoint(project_id, ProductionStage.GENERATION.value, "paused", {"completed_scenes": idx}, human_approved=False)
                 return {"ok": True, "status": "paused", "completed_scenes": idx}
 
         scene_mp4 = ws / "renders" / f"{sc['id']}.mp4"
         scene_wav = ws / "audio" / f"{sc['id']}_narration.wav"
+        scene_lip_frames: list[dict[str, Any]] = []
+        spoken_turns: list[dict[str, Any]] = []
+        try:
+            spoken_turns = json.loads(sc.get("dialogue_json") or "[]")
+        except Exception:
+            spoken_turns = []
 
         if not (resume and scene_mp4.exists() and scene_wav.exists() and sc.get("quality_status") == "generated"):
             scene_voice = (
                 sc.get("provider")
-                if sc.get("provider") in ("narrator_deep", "narrator_warm", "character_1", "character_2", "male", "female")
+                if sc.get("provider") in ("narrator_deep", "narrator_warm", "character_1", "character_2", "character_3", "character_4", "male", "female")
                 else ("narrator_deep" if idx % 2 == 0 else "narrator_warm")
             )
             scene_engine = sc.get("render_engine") or project["render_engine"]
             scene_style = sc.get("visual_style") or project.get("visual_style") or "2d_illustrated"
             prod_mode_policy = project.get("production_mode_policy") or project.get("mode") or "hybrid"
-            voice_label = "Male Neural (ChristopherNeural)" if scene_voice in ("narrator_deep", "character_1", "male") else "Female Neural (AriaNeural)"
+            voice_label = scene_voice
             emit_studio_event(
                 project_id,
                 "scene_started",
@@ -704,40 +762,140 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
             _log_agent_message(
                 project_id,
                 "Production Orchestrator",
-                f"Scene {idx + 1}/{len(scenes)} ({sc['title']}): Synthesizing {voice_label} voice + rendering via '{scene_engine}' (style '{scene_style}') with '{sc.get('transition') or 'smoothleft'}' transition.",
+                f"Scene {idx + 1}/{len(scenes)} ({sc['title']}): Synthesizing dialogue + rendering via '{scene_engine}' (style '{scene_style}').",
             )
-            clean_narr = (sc.get("narration_segment") or "").strip()
-            tts_res = generate_tts(
-                clean_narr,
-                scene_wav,
-                voice_id=scene_voice,
-                language=project["language"],
-                production_mode=prod_mode_policy,
-            )
-            actual_audio_dur = float(tts_res.get("duration_sec") or sc["duration_sec"])
-            target_scene_dur = max(float(sc["duration_sec"]), actual_audio_dur + 0.4)
+
+            # Synthesize per-turn dialogue WAVs when dialogue_turns exist
+            turn_wavs_for_scene: list[tuple[Path, float]] = []
+            local_offset = 0.25
+            if spoken_turns and any(sanitize_spoken_voiceover(str(t.get("line") or ""), default="").strip() for t in spoken_turns):
+                for t_i, turn in enumerate(spoken_turns):
+                    line_txt = sanitize_spoken_voiceover(str(turn.get("line") or ""), default="").strip()
+                    if not line_txt or line_txt.lower() in ("silence", "silence."):
+                        continue
+                    t_speaker = str(turn.get("speaker") or "Narrator").strip()
+                    t_voice = str(turn.get("voice_id") or scene_voice)
+                    turn_wav = ws / "audio" / f"{sc['id']}_turn_{t_i}.wav"
+                    t_tts = generate_tts(
+                        line_txt,
+                        turn_wav,
+                        voice_id=t_voice,
+                        language=project["language"],
+                        production_mode=prod_mode_policy,
+                    )
+                    if not t_tts.get("success") or t_tts.get("provider") in ("silence", "none"):
+                        raise RuntimeError(f"TTS failed or fell back to silence for {t_speaker}: {t_tts.get('reason')}")
+                    t_dur = float(t_tts.get("duration_sec") or probe_duration(turn_wav))
+                    turn_wavs_for_scene.append((turn_wav, local_offset))
+                    narration_wavs.append((turn_wav, cursor_sec + local_offset))
+                    all_dialogue_tracks.append({
+                        "scene_id": sc["id"],
+                        "speaker": t_speaker,
+                        "voice_used": t_tts.get("voice_used") or t_voice,
+                        "provider": t_tts.get("provider"),
+                        "wav_path": str(turn_wav),
+                        "start_sec": round(cursor_sec + local_offset, 3),
+                        "duration_sec": round(t_dur, 3),
+                    })
+                    vis_frames = generate_viseme_timeline(
+                        turn_wav, line_txt, speaker=t_speaker, offset_sec=local_offset, fps=int(project["fps"])
+                    )
+                    scene_lip_frames.extend(vis_frames)
+                    for vf in vis_frames:
+                        all_lip_sync_frames.append({**vf, "time_sec": round(cursor_sec + vf["time_sec"], 3)})
+                    local_offset += t_dur + 0.35
+
+                # Mix scene's turns into scene_wav for compatibility
+                mix_audio_stems(turn_wavs_for_scene, None, [], max(1.0, local_offset), ws / "audio" / f"{sc['id']}_mix")
+                mix_src = ws / "audio" / f"{sc['id']}_mix" / "narration.wav"
+                if mix_src.is_file():
+                    import shutil as _shutil
+                    _shutil.copyfile(mix_src, scene_wav)
+                tts_res = {"success": True, "provider": all_dialogue_tracks[-1]["provider"], "duration_sec": local_offset, "license": "generated_tts"}
+                actual_audio_dur = local_offset
+            else:
+                clean_narr = sanitize_spoken_voiceover(sc.get("narration_segment") or "", default="").strip()
+                if not clean_narr or clean_narr.lower() in ("silence", "silence."):
+                    tts_res = {"success": True, "provider": "none", "duration_sec": 0.0, "license": "silent_scene"}
+                    actual_audio_dur = float(sc["duration_sec"])
+                else:
+                    tts_res = generate_tts(
+                        clean_narr,
+                        scene_wav,
+                        voice_id=scene_voice,
+                        language=project["language"],
+                        production_mode=prod_mode_policy,
+                    )
+                    if not tts_res.get("success") or tts_res.get("provider") in ("silence", "none"):
+                        raise RuntimeError(f"TTS failed or fell back to silence for scene {sc['id']}: {tts_res.get('reason')}")
+                    actual_audio_dur = float(tts_res.get("duration_sec") or sc["duration_sec"])
+                    narration_wavs.append((scene_wav, cursor_sec))
+
+            target_scene_dur = max(float(sc["duration_sec"]), actual_audio_dur + 0.25)
+
+            # Add scene-specific comedic SFX cues
+            vis_low = (sc.get("visual_description") or "").lower()
+            if "spit" in vis_low:
+                spit_wav = ws / "audio" / f"{sc['id']}_spit_sfx.wav"
+                generate_sfx(spit_wav, sfx_type="coffee_spit", duration_sec=0.6)
+                sfx_cues.append((spit_wav, cursor_sec + target_scene_dur * 0.35))
+            if "raise" in vis_low and "hand" in vis_low:
+                sting_wav = ws / "audio" / f"{sc['id']}_sting_sfx.wav"
+                generate_sfx(sting_wav, sfx_type="comedic_sting", duration_sec=0.9)
+                sfx_cues.append((sting_wav, cursor_sec + target_scene_dur * 0.55))
+
             emit_studio_event(
                 project_id,
                 "tts_synthesized",
                 {
                     "scene_id": sc["id"],
                     "index": idx + 1,
-                    "voice": tts_res.get("voice") or voice_label,
+                    "voice": tts_res.get("voice_used") or voice_label,
                     "provider": tts_res.get("provider"),
                     "duration_sec": round(actual_audio_dur, 2),
                 },
             )
             shot = shots_by_scene.get(sc["id"]) or {}
-            spoken_by = ""
-            try:
-                spoken_turns = json.loads(sc.get("dialogue_json") or "[]")
-                if spoken_turns and isinstance(spoken_turns[0], dict):
-                    spoken_by = str(spoken_turns[0].get("speaker") or "")
-            except Exception:
-                spoken_by = ""
+            spoken_by = str(spoken_turns[0].get("speaker") or "") if spoken_turns else ""
+
+            # Build multi-character 3D cast & environment spec for Blender
+            blender_scene_extra: dict[str, Any] = {"lip_sync_frames": scene_lip_frames}
+            if office_assets_ready and scene_engine == "blender":
+                blender_scene_extra["environment_blend_path"] = str(BREAKROOM_BLEND)
+                blender_scene_extra["characters"] = [
+                    {
+                        "name": "Boss",
+                        "mesh_path": str(get_character_blend_path("boss")),
+                        "location": [-1.25, 0.0, 0.0],
+                        "rotation_z": -75.0,
+                        "seated": True,
+                        "expression": "serious",
+                        "gesture": "nervous_gesture" if ("nervous" in vis_low or idx == 0) else "idle_sit",
+                    },
+                    {
+                        "name": "Employee",
+                        "mesh_path": str(get_character_blend_path("employee")),
+                        "location": [0.0, 0.85, 0.0],
+                        "rotation_z": 0.0,
+                        "seated": True,
+                        "expression": "shocked" if ("spit" in vis_low or "shocked" in vis_low) else "serious",
+                        "gesture": "coffee_spit" if "spit" in vis_low else "idle_sit",
+                    },
+                    {
+                        "name": "Friend",
+                        "mesh_path": str(get_character_blend_path("friend")),
+                        "location": [1.25, 0.0, 0.0],
+                        "rotation_z": 75.0,
+                        "seated": True,
+                        "expression": "smirk",
+                        "gesture": "raise_hand" if ("raise" in vis_low and "hand" in vis_low) else "idle_sit",
+                    },
+                ]
+
             render_res = render_scene_clip(
                 {
                     **sc,
+                    **blender_scene_extra,
                     "visual_style": scene_style,
                     "duration_sec": target_scene_dur,
                     "camera_movement": shot.get("camera_movement") or sc.get("camera_movement"),
@@ -754,6 +912,10 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                 source_media=footage[idx % len(footage)] if footage else None,
                 production_mode=prod_mode_policy,
             )
+            if not (render_res.get("success") or render_res.get("ok")):
+                with get_conn() as conn:
+                    conn.execute("UPDATE scenes SET quality_status='failed' WHERE id=?", (sc["id"],))
+                raise RuntimeError(f"Scene {idx + 1} render failed ({scene_engine}): {render_res.get('reason')}")
             with get_conn() as conn:
                 v_asset_id, a_asset_id = f"ast_{uuid.uuid4().hex[:8]}", f"ast_{uuid.uuid4().hex[:8]}"
                 clip_meta = json.dumps({
@@ -785,25 +947,30 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
             )
         else:
             sc["duration_sec"] = max(float(sc["duration_sec"]), probe_duration(scene_wav) + 0.4)
+            narration_wavs.append((scene_wav, cursor_sec))
 
-        narration_wavs.append((scene_wav, cursor_sec))
         scenes_with_timings.append({**sc, "start_sec": cursor_sec})
         cursor_sec += float(sc["duration_sec"])
 
     total_dur = max(1.0, cursor_sec)
-    _save_checkpoint(project_id, ProductionStage.AUDIO_SYNC.value, "running", {"total_duration_sec": total_dur})
+    if is_office_cast:
+        amb_wav = ws / "audio" / "office_ambience.wav"
+        generate_sfx(amb_wav, sfx_type="office_ambience", duration_sec=total_dur)
+        sfx_cues.append((amb_wav, 0.0))
+
+    _save_checkpoint(project_id, ProductionStage.AUDIO_SYNC.value, "running", {"total_duration_sec": total_dur}, human_approved=False)
     music_wav = ws / "audio" / "background_music.wav"
-    mood = "comedy" if "funny" in project["prompt"].lower() else ("cinematic" if project["category"] in ("documentary", "cinematic") else "upbeat")
+    mood = "comedy" if any(k in project["prompt"].lower() for k in ("funny", "comedy", "spit", "sarcastic")) else ("cinematic" if project["category"] in ("documentary", "cinematic") else "upbeat")
     generate_music_bed(music_wav, duration_sec=total_dur, mood=mood)
     stems = mix_audio_stems(narration_wavs, music_wav, sfx_cues, total_dur, ws / "stems", music_volume=0.22)
     sub_langs = project.get("subtitle_languages") or ["en"]
     subs = generate_subtitles(scenes_with_timings, ws / "subtitles", languages=sub_langs, word_level=True)
     _sync_timeline_from_production(project_id, scenes_with_timings)
 
-    _log_agent_message(project_id, "Sound Designer Agent", "Generated mood-matched score, dual Male/Female neural narration stems, and clean ducked master mix (zero whoosh noise at cuts).")
-    _log_agent_message(project_id, "Video Editor Agent", "Synchronized 12-track timeline with narration, music ducking, xfade transitions, and word-level captions.")
+    _log_agent_message(project_id, "Sound Designer Agent", f"Generated mood-matched '{mood}' score, {len(all_dialogue_tracks) or len(narration_wavs)} character dialogue track(s), SFX/ambience, and clean ducked master mix.")
+    _log_agent_message(project_id, "Video Editor Agent", "Synchronized 12-track timeline with dialogue turns, music ducking, xfade transitions, and word-level captions.")
 
-    _save_checkpoint(project_id, ProductionStage.RENDERING.value, "running", {})
+    _save_checkpoint(project_id, ProductionStage.RENDERING.value, "running", {}, human_approved=False)
     chapter_videos, chapter_meta = [], []
     for ch in chapters:
         ch_scenes = [s for s in scenes_with_timings if s["chapter_id"] == ch["id"]]
@@ -824,23 +991,27 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
     primary_srt = Path(subs["files"][sub_langs[0]]["srt"]) if subs["files"] else None
     export_final_deliverable(silent_master, Path(stems["master_mix"]), final_mp4, chapters=chapter_meta, subtitle_srt=primary_srt, fmt="mp4", codec="h264", resolution=project["resolution"], fps=int(project["fps"]))
 
-    _save_checkpoint(project_id, ProductionStage.QUALITY_ASSURANCE.value, "running", {})
+    _save_checkpoint(project_id, ProductionStage.QUALITY_ASSURANCE.value, "running", {}, human_approved=False)
     rendered_ok = sum(1 for s in scenes if (ws / "renders" / f"{s['id']}.mp4").is_file())
+    requested_dur = float(project.get("target_duration_sec") or total_dur)
     qa_report = run_qa_verification(
         project_id, final_mp4, expected_aspect_ratio=project["aspect_ratio"], expected_fps=int(project["fps"]),
         subtitle_paths=[Path(v["srt"]) for v in subs["files"].values()],
         scene_count_expected=len(scenes), scene_count_rendered=rendered_ok,
-        expected_duration_sec=total_dur,
+        expected_duration_sec=requested_dur,
+        expected_resolution=project["resolution"],
+        dialogue_tracks=all_dialogue_tracks if all_dialogue_tracks else None,
+        lip_sync_frames=all_lip_sync_frames if all_lip_sync_frames else None,
     )
     _log_agent_message(project_id, "Quality Assurance Agent", f"QA executed on {final_mp4.name}: {qa_report['summary']}")
 
     (ws / "deliverables" / "production_report.json").write_text(
-        json.dumps({"project_id": project_id, "title": project["title"], "final_video": str(final_mp4), "stems": stems, "subtitles": subs["files"], "qa_report": qa_report, "chapters": chapter_meta}, indent=2),
+        json.dumps({"project_id": project_id, "title": project["title"], "final_video": str(final_mp4), "stems": stems, "subtitles": subs["files"], "qa_report": qa_report, "chapters": chapter_meta, "dialogue_tracks": all_dialogue_tracks}, indent=2),
         encoding="utf-8",
     )
     (ws / "deliverables" / "final_qa_report.json").write_text(json.dumps(qa_report, indent=2), encoding="utf-8")
     (ws / "deliverables" / "final_qa_report.md").write_text(
-        f"# Final QA Report: {project['title']}\n\n- **Passed:** {qa_report['passed']}\n- **Summary:** {qa_report['summary']}\n",
+        f"# Final QA Report: {project['title']}\n\n- **Passed:** {qa_report['passed']}\n- **Approval Status:** {qa_report['approval_status']}\n- **Summary:** {qa_report['summary']}\n",
         encoding="utf-8",
     )
     (ws / "deliverables" / "render_manifest.json").write_text(
@@ -853,19 +1024,24 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
         subprocess.run(["ffmpeg", "-y", "-ss", "1.0", "-i", str(final_mp4), "-vframes", "1", str(thumb_path)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
-    (ws / "deliverables" / "delivery_manifest.json").write_text(
-        json.dumps({"project_id": project_id, "final_mp4": str(final_mp4), "thumbnail": str(thumb_path) if thumb_path.exists() else None, "subtitles": subs["files"], "stems": stems}, indent=2),
-        encoding="utf-8",
-    )
 
-    final_status = "completed" if qa_report["passed"] else "qa_failed"
-    _save_checkpoint(project_id, ProductionStage.DELIVERY.value, final_status, {"final_video": str(final_mp4), "qa_passed": qa_report["passed"]})
-    openmontage_adapter.write_openmontage_checkpoint(ws, "publish", final_status, {"final_video": str(final_mp4)}, human_approved=True)
+    qa_passed = bool(qa_report.get("passed"))
+    if qa_passed:
+        (ws / "deliverables" / "delivery_manifest.json").write_text(
+            json.dumps({"project_id": project_id, "final_mp4": str(final_mp4), "thumbnail": str(thumb_path) if thumb_path.exists() else None, "subtitles": subs["files"], "stems": stems, "approval_status": qa_report["approval_status"]}, indent=2),
+            encoding="utf-8",
+        )
+    else:
+        _log_agent_message(project_id, "Quality Assurance Agent", "Publishing and bundle delivery BLOCKED because automated QA failed.")
+
+    final_status = "completed" if qa_passed else "qa_failed"
+    _save_checkpoint(project_id, ProductionStage.DELIVERY.value, final_status, {"final_video": str(final_mp4), "qa_passed": qa_passed}, human_approved=False)
+    openmontage_adapter.write_openmontage_checkpoint(ws, "publish", final_status, {"final_video": str(final_mp4), "qa_passed": qa_passed}, human_approved=False)
     with get_conn() as conn:
         conn.execute("UPDATE projects SET status=?, updated_at=? WHERE id=?", (final_status, utc_now(), project_id))
         conn.execute("UPDATE production_runs SET status=?, current_stage=?, updated_at=? WHERE project_id=?", (final_status, ProductionStage.DELIVERY.value, utc_now(), project_id))
 
-    emit_studio_event(project_id, "production_completed", {"status": final_status, "final_video": str(final_mp4)})
+    emit_studio_event(project_id, "production_completed" if qa_passed else "qa_failed", {"status": final_status, "final_video": str(final_mp4), "qa_passed": qa_passed})
     return get_project_detail(project_id)
 
 

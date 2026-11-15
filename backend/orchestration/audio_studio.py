@@ -27,13 +27,18 @@ _EDGE_NEURAL_VOICES: dict[str, str] = {
     "narrator_deep": "en-US-ChristopherNeural",
     "male": "en-US-ChristopherNeural",
     "male_narrator": "en-US-ChristopherNeural",
-    "character_1": "en-US-GuyNeural",
+    "character_1": "en-US-ChristopherNeural",
+    "boss": "en-US-ChristopherNeural",
     "male_lead": "en-US-GuyNeural",
+    "character_2": "en-US-GuyNeural",
+    "employee": "en-US-GuyNeural",
+    "character_3": "en-GB-RyanNeural",
+    "friend": "en-GB-RyanNeural",
     "male_british": "en-GB-RyanNeural",
     "narrator_warm": "en-US-AriaNeural",
     "female": "en-US-AriaNeural",
     "female_narrator": "en-US-AriaNeural",
-    "character_2": "en-US-JennyNeural",
+    "character_4": "en-US-JennyNeural",
     "female_lead": "en-US-JennyNeural",
     "female_british": "en-GB-SoniaNeural",
     "hindi": "hi-IN-MadhurNeural",
@@ -120,26 +125,28 @@ def sanitize_spoken_voiceover(raw_text: str, default: str = "Silence.") -> str:
     if not text.strip():
         return default
 
-    # 3. Strip character speaker prefixes like 'NARRATOR: ' or 'NAPOLEON (calmly): '
-    text = re.sub(r"^(?:[A-Z0-9_\s]{2,24}(?:\s*\([^)]*\))?\s*:\s*)+", "", text)
-
-    # 4. Strip semantic moment tags @{...} and action cues
-    text = re.sub(r"@\{[^}]+\}", "", text)
-    # Strip sound cues and stage directions in brackets/parentheses
-    text = re.sub(r"\[(?:SFX|Sound|Music|Audio|Applause|Laughter|Beat|Pause|Ambient|V\.?O\.?|O\.?S\.?)[^\]]*\]", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\((?:SFX|Sound|Music|Audio|Applause|Laughter|Beat|Pause|Ambient|V\.?O\.?|O\.?S\.?|calmly|smiling|whispering|shouting|crying)[^)]*\)", "", text, flags=re.IGNORECASE)
-    # Strip timing tags like (5.3s) or [5.3s]
-    text = re.sub(r"\(\s*\d+(?:\.\d+)?\s*s\s*\)", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\[\s*\d+(?:\.\d+)?\s*s\s*\]", "", text, flags=re.IGNORECASE)
-
-    # 4b. Strip prompt-instruction wrappers and screenplay beat/scene meta prefixes
+    # 3. Strip screenplay guide/prompt-instruction wrappers and beat prefixes first
     text = re.sub(
         r"^(?:(?:please\s+)?(?:create|make|generate|write|produce|build|render)\s+(?:a|an)\s+(?:\d+\s*(?:sec|second|seconds|min|minute|minutes|s)\s+)?(?:[\w-]+\s+){0,4}?(?:video|animation|film|clip|short|reel|script|screenplay)\s+(?:of|about|on|for|showing|featuring)?\s*)+",
         "",
         text,
         flags=re.IGNORECASE,
     )
+    text = re.sub(
+        r"(?:\b\d+\s*-?\s*(?:sec|second|seconds|min|minute|minutes|s)\s+)?\b(?:(?:screenplay|production|prompt|video|animation)\s+(?:guide|guidelines|instructions?|spec|specification|structure|template)|scene\s+breakdown)\b\s*[:.\-]?\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
     text = re.sub(r"^(?:At\s+beat\s+\d+|In\s+(?:scene|step|phase|stage|chapter)\s+\d+)\s*[,:\-]?\s*", "", text, flags=re.IGNORECASE)
+
+    # 4. Strip semantic moment tags @{...} and ALL bracketed/parenthetical stage directions
+    text = re.sub(r"@\{[^}]+\}", "", text)
+    text = re.sub(r"\[[^\]]*\]", "", text)
+    text = re.sub(r"\([^)]*\)", "", text)
+
+    # 4b. Strip character speaker prefixes like 'NARRATOR: ' or 'Alex: ' or 'NAPOLEON: '
+    text = re.sub(r"^(?:[A-Za-z][A-Za-z0-9_\s]{1,22}\s*:\s*)+", "", text.strip())
 
     # 5. Strip markdown tokens (#, *, _, `, ~, |, >)
     text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
@@ -152,6 +159,15 @@ def sanitize_spoken_voiceover(raw_text: str, default: str = "Silence.") -> str:
     text = re.sub(r"\s+", " ", text).strip()
     text = text.strip("\"'“”‘’")
     return text if text else default
+
+
+def contains_screenplay_meta(text: str) -> bool:
+    """Return True if spoken text still contains screenplay guide/instruction meta-text."""
+    low = (text or "").lower()
+    return bool(re.search(
+        r"\b(?:(?:screenplay|production|prompt|video|animation)\s+(?:guide|guidelines|instructions?|spec|specification|structure|template)|scene\s+breakdown|\d+\s*sec\s+screenplay)\b",
+        low,
+    ))
 
 
 def generate_tts(
@@ -169,12 +185,15 @@ def generate_tts(
     free_mode = is_free_open_source_mode(production_mode)
 
     if not clean_text or clean_text.lower() in ("silence.", "silence"):
-        if shutil.which("ffmpeg"):
-            subprocess.run(
-                ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "2.0", "-ar", "44100", "-ac", "2", str(output_wav)],
-                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            return {"success": True, "path": str(output_wav), "duration_sec": 2.0, "provider": "silence", "license": "procedural_silence"}
+        return {
+            "success": False,
+            "status": "FAILED",
+            "path": str(output_wav),
+            "duration_sec": 0.0,
+            "provider": "silence",
+            "voice_used": "none",
+            "reason": "Silent or empty dialogue text; refusing to treat silence as spoken dialogue.",
+        }
 
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not free_mode and openai_key and voice_id.startswith("openai:"):
@@ -246,12 +265,17 @@ def generate_tts(
             "narrator_deep": "Daniel",
             "male": "Daniel",
             "male_narrator": "Daniel",
-            "character_1": "Alex",
+            "character_1": "Daniel",
+            "boss": "Daniel",
             "male_lead": "Alex",
+            "character_2": "Alex",
+            "employee": "Alex",
+            "character_3": "Fred",
+            "friend": "Fred",
             "narrator_warm": "Samantha",
             "female": "Samantha",
             "female_narrator": "Samantha",
-            "character_2": "Karen",
+            "character_4": "Karen",
             "female_lead": "Karen",
             "hindi": "Lekha",
         }
@@ -264,10 +288,19 @@ def generate_tts(
         cmd.append(clean_text)
         proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if proc.returncode != 0 or not aiff_tmp.exists():
+            selected_voice = "Daniel"
             subprocess.run(["say", "-r", str(rate_wpm), "-o", str(aiff_tmp), clean_text], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["ffmpeg", "-y", "-i", str(aiff_tmp), "-ar", "44100", "-ac", "2", str(output_wav)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         aiff_tmp.unlink(missing_ok=True)
-        return {"success": True, "path": str(output_wav), "duration_sec": probe_duration(output_wav), "provider": "macos_say", "quality_tier": "legacy_os_tts", "license": "generated_local_system_tts"}
+        return {
+            "success": True,
+            "path": str(output_wav),
+            "duration_sec": probe_duration(output_wav),
+            "provider": "macos_say",
+            "voice_used": selected_voice,
+            "quality_tier": "local_os_tts",
+            "license": "generated_local_system_tts",
+        }
 
     # Linux espeak-ng / espeak fallback
     espeak_bin = shutil.which("espeak-ng") or shutil.which("espeak")
@@ -389,6 +422,18 @@ def generate_sfx(output_wav: Path, sfx_type: str = "subtle_chime", duration_sec:
     elif sfx_type == "riser":
         src = f"aevalsrc=0.12*sin(2*PI*(140+220*t/{dur})*t)*exp(-2*t):s=44100:d={dur}"
         tone = "lowpass=f=1200"
+    elif sfx_type == "coffee_spit":
+        # Percussive burst + splash envelope for comedic coffee spit
+        src = f"anoisesrc=c=pink:r=44100:d={dur}:a=0.45"
+        tone = "bandpass=f=1400:w=900,afade=t=in:st=0:d=0.02,afade=t=out:st=0.08:d=0.35"
+    elif sfx_type == "comedic_sting":
+        # Bright two-note comedic punchline sting
+        src = f"aevalsrc=0.20*sin(2*PI*523.25*t)*exp(-4*t)+0.18*sin(2*PI*659.25*t)*exp(-3.5*t)+0.15*sin(2*PI*783.99*t)*exp(-3*t):s=44100:d={dur}"
+        tone = "lowpass=f=2400"
+    elif sfx_type == "office_ambience":
+        # Subtle warm office room-tone bed
+        src = f"anoisesrc=c=brown:r=44100:d={dur}:a=0.025"
+        tone = "lowpass=f=450"
     else:
         # Soft harmonic chime / warm low pulse — zero pink/white noise hiss
         src = f"aevalsrc=0.06*sin(2*PI*220*t)*exp(-6*t)+0.04*sin(2*PI*329.63*t)*exp(-8*t):s=44100:d={dur}"
@@ -504,3 +549,85 @@ def mix_audio_stems(
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     return {"narration": str(narration_stem), "music": str(music_stem), "sfx": str(sfx_stem), "master_mix": str(master_mix)}
+
+
+def _char_to_viseme(ch: str) -> str:
+    c = ch.lower()
+    if c in ("a", "ä", "á"):
+        return "viseme_AA"
+    if c in ("e", "i", "y"):
+        return "viseme_EE"
+    if c in ("o", "u", "w", "q"):
+        return "viseme_OO"
+    if c in ("f", "v"):
+        return "viseme_FF"
+    if c in ("m", "b", "p"):
+        return "viseme_MBP"
+    return "jaw_open"
+
+
+def generate_viseme_timeline(
+    wav_path: Path,
+    text: str,
+    speaker: str,
+    offset_sec: float = 0.0,
+    fps: int = 30,
+) -> list[dict[str, Any]]:
+    """Build audio-synchronized phoneme/viseme keyframes from a spoken WAV's RMS envelope."""
+    import math
+    import struct
+    import wave
+
+    if not wav_path.is_file():
+        return []
+    letters = [ch for ch in (text or "") if ch.isalpha()] or ["a"]
+    frames_out: list[dict[str, Any]] = []
+    try:
+        with wave.open(str(wav_path), "rb") as wf:
+            n_channels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            framerate = wf.getframerate()
+            n_frames = wf.getnframes()
+            raw = wf.readframes(n_frames)
+    except Exception:
+        return []
+
+    if sampwidth != 2 or framerate <= 0 or n_frames <= 0:
+        return []
+
+    total_samples = len(raw) // 2
+    samples = struct.unpack(f"<{total_samples}h", raw)
+    if n_channels > 1:
+        samples = samples[::n_channels]
+
+    samples_per_video_frame = max(1, int(framerate / max(1, fps)))
+    total_vframes = max(1, len(samples) // samples_per_video_frame)
+
+    for vf_idx in range(total_vframes):
+        chunk = samples[vf_idx * samples_per_video_frame:(vf_idx + 1) * samples_per_video_frame]
+        if not chunk:
+            continue
+        rms = math.sqrt(sum(s * s for s in chunk) / len(chunk)) / 32768.0
+        open_val = min(1.0, max(0.0, (rms - 0.012) * 8.5))
+        t_local = vf_idx / float(fps)
+        t_abs = offset_sec + t_local
+        char_idx = min(len(letters) - 1, int((vf_idx / max(1, total_vframes)) * len(letters)))
+        viseme = _char_to_viseme(letters[char_idx]) if open_val > 0.08 else "viseme_MBP"
+        frames_out.append({
+            "frame": max(1, int(round(t_abs * fps)) + 1),
+            "time_sec": round(t_abs, 3),
+            "speaker": speaker,
+            "viseme": viseme,
+            "open": round(open_val, 3),
+        })
+    # Ensure mouth closes cleanly at the end of the turn
+    if frames_out:
+        last_fr = frames_out[-1]["frame"] + 1
+        frames_out.append({
+            "frame": last_fr,
+            "time_sec": round(offset_sec + total_vframes / float(fps), 3),
+            "speaker": speaker,
+            "viseme": "viseme_MBP",
+            "open": 0.0,
+        })
+    return frames_out
