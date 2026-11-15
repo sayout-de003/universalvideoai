@@ -22,6 +22,7 @@ export interface ProjectSummary {
   aspect_ratio: string; resolution: string; fps: number; status: string;
   current_stage: string; estimated_cost_usd: number; actual_cost_usd: number;
   created_at: string; updated_at: string;
+  scenes_total?: number; scenes_done?: number;
 }
 
 export interface ProjectDetail {

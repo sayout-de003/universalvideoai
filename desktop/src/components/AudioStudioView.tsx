@@ -4,49 +4,62 @@ import type { ProjectDetail } from "../types/studio";
 
 interface Props { project: ProjectDetail; }
 
+const STEMS = [
+  { id: "master_mix", label: "Final mix", note: "Everything together, as heard in the video" },
+  { id: "narration", label: "Narration", note: "Voice only" },
+  { id: "music", label: "Music", note: "Background score" },
+  { id: "sfx", label: "Sound effects", note: "Transitions and accents" },
+];
+
 export function AudioStudioView({ project }: Props) {
   const audioAssets = project.assets.filter((a) => a.asset_type === "audio");
   const pid = project.project.id;
+  const made = project.project.status === "completed" || project.project.status === "qa_failed";
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-zinc-100">Audio Production Studio</h1>
-        <p className="text-xs text-zinc-400 mt-1">Speaker assignments, TTS narration segments, ducked music score, sound effects, and separate audio stems.</p>
-      </div>
-      <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800">
-        <div className="text-xs font-semibold text-zinc-200 flex items-center gap-2 mb-3"><Mic className="w-4 h-4 text-amber-400" /> Speaker & Voice Bible</div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {project.speakers.map((sp) => (
-            <div key={sp.id} className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-xs">
-              <div className="font-semibold text-zinc-100">{sp.name}</div>
-              <div className="text-zinc-400 mt-0.5">Role: {sp.role} · Voice: {sp.voice_id} ({sp.voice_provider})</div>
-              <div className="text-[11px] text-zinc-500 mt-0.5">Language: {sp.language}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800 space-y-3">
-        <div className="text-xs font-semibold text-zinc-200 flex items-center gap-2"><Volume2 className="w-4 h-4 text-sky-400" /> Audio Stems & Master Mix</div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {["master_mix", "narration", "music", "sfx"].map((stem) => (
-            <div key={stem} className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
-              <div className="text-xs font-medium text-zinc-300 capitalize mb-2">{stem.replace("_", " ")} Stem</div>
-              <audio controls className="w-full h-8" src={`${API_BASE}/api/projects/${pid}/media/stems/${stem}.wav`} />
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800">
-        <div className="text-xs font-semibold text-zinc-200 mb-3">Generated Voice & Audio Segments ({audioAssets.length})</div>
-        <div className="space-y-2">
-          {audioAssets.map((a) => (
-            <div key={a.id} className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs">
-              <div className="text-zinc-200">{a.file_path.split("/").pop()}</div>
-              <div className="text-[11px] text-zinc-500">Provider: {a.provider} · Duration: {a.duration_sec?.toFixed(2)}s · License: {a.license}</div>
-            </div>
-          ))}
-        </div>
-      </div>
+    <div className="space-y-8">
+      <section>
+        <h2 className="font-bold mb-3 flex items-center gap-2"><Mic className="w-4 h-4" /> Voices</h2>
+        {project.speakers.length === 0 ? <div className="card p-5 hint">Voices are assigned when the script is written.</div> : (
+          <ul className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {project.speakers.map((sp) => (
+              <li key={sp.id} className="card p-4 text-[13px]">
+                <div className="font-bold">{sp.name}</div>
+                <div className="text-slate mt-0.5">{sp.role}</div>
+                <div className="hint mt-1.5">{sp.voice_id} · {sp.voice_provider} · {sp.language}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section>
+        <h2 className="font-bold mb-3 flex items-center gap-2"><Volume2 className="w-4 h-4" /> Listen</h2>
+        {!made ? <div className="card p-5 hint">Audio tracks are mixed near the end of production. They'll be playable here once the video is finished.</div> : (
+          <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {STEMS.map((s) => (
+              <li key={s.id} className="card p-4">
+                <div className="font-semibold text-[13px]">{s.label}</div>
+                <div className="hint mb-2">{s.note}</div>
+                <audio controls preload="none" className="w-full h-9" src={`${API_BASE}/api/projects/${pid}/media/stems/${s.id}.wav`} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section>
+        <h2 className="font-bold mb-3">Recorded segments ({audioAssets.length})</h2>
+        {audioAssets.length === 0 ? <div className="card p-5 hint">Nothing recorded yet.</div> : (
+          <ul className="card divide-y divide-rule">
+            {audioAssets.map((a) => (
+              <li key={a.id} className="px-4 py-2.5 flex items-center justify-between gap-3 text-[13px]">
+                <span className="truncate">{a.file_path.split("/").pop()}</span>
+                <span className="hint shrink-0">{a.duration_sec?.toFixed(1)}s · {a.provider}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

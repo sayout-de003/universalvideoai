@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 import type { ProjectDetail } from "../types/studio";
 
@@ -7,51 +7,61 @@ interface Props {
   onSendMessage: (msg: string, confirmed?: boolean) => Promise<Record<string, unknown>>;
 }
 
+const SUGGESTIONS = ["Redo scene 2", "Add subtitles in Hindi and English", "Make the narration slower"];
+
 export function DirectorChatView({ project, onSendMessage }: Props) {
   const [input, setInput] = useState("");
   const [pendingConfirmMsg, setPendingConfirmMsg] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [project.messages.length]);
 
   const send = async (msg: string, confirmed = false) => {
     if (!msg.trim()) return;
     setSending(true);
+    setError(null);
     try {
       const res = await onSendMessage(msg, confirmed);
       setPendingConfirmMsg(res.requires_confirmation ? msg : null);
       setInput("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSending(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] max-w-4xl">
-      <div className="mb-4">
-        <h1 className="text-xl font-semibold text-zinc-100">AI Director & Production Team</h1>
-        <p className="text-xs text-zinc-400 mt-1">Direct the 11-agent workforce, edit scenes, change voices, or issue voice/text production commands.</p>
-      </div>
-      <div className="flex-1 overflow-y-auto space-y-3 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800">
+    <div className="max-w-3xl flex flex-col gap-3">
+      <p className="text-slate">Ask the production team to change something. For example, redo a scene, change a voice, or add subtitles.</p>
+      <div className="card p-4 space-y-3 min-h-[320px] max-h-[55vh] overflow-y-auto">
+        {project.messages.length === 0 && <div className="hint">No messages yet. Try one of the suggestions below.</div>}
         {project.messages.map((m) => (
-          <div key={m.id} className={`p-3 rounded-lg text-xs ${m.role === "user" ? "bg-amber-500/10 border border-amber-500/30 ml-12 text-zinc-100" : "bg-zinc-950 border border-zinc-800 mr-12 text-zinc-300"}`}>
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-400 mb-1">{m.agent_name}</div>
-            <div>{m.content}</div>
+          <div key={m.id} className={`rounded-lg px-3.5 py-2.5 text-[13px] max-w-[85%] ${m.role === "user" ? "bg-ink text-white ml-auto" : "bg-sunken border border-rule"}`}>
+            {m.role !== "user" && <div className="text-xs font-bold text-slate mb-0.5">{m.agent_name}</div>}
+            <div className="whitespace-pre-wrap">{m.content}</div>
           </div>
         ))}
+        <div ref={endRef} />
       </div>
+      {error && <div role="alert" className="px-3 py-2 rounded-lg text-[13px] bg-live-soft border border-live/40 text-live">{error}</div>}
       {pendingConfirmMsg && (
-        <div className="mt-3 p-3 rounded-lg bg-amber-500/15 border border-amber-500/40 flex items-center justify-between text-xs">
-          <span className="text-amber-200">Confirm destructive/voice-directed action: "{pendingConfirmMsg}"?</span>
-          <div className="flex gap-2">
-            <button onClick={() => send(pendingConfirmMsg, true)} className="px-3 py-1 rounded bg-amber-500 text-zinc-950 font-semibold">Confirm</button>
-            <button onClick={() => setPendingConfirmMsg(null)} className="px-3 py-1 rounded bg-zinc-800 text-zinc-300">Cancel</button>
-          </div>
+        <div className="px-4 py-3 rounded-lg bg-hold-soft border border-hold/40 flex items-center justify-between gap-3 text-[13px]">
+          <span>This will change or remove work: “{pendingConfirmMsg}”. Go ahead?</span>
+          <span className="flex gap-2 shrink-0">
+            <button onClick={() => send(pendingConfirmMsg, true)} className="btn btn-primary py-1.5">Yes, do it</button>
+            <button onClick={() => setPendingConfirmMsg(null)} className="btn btn-quiet py-1.5">Cancel</button>
+          </span>
         </div>
       )}
-      <div className="mt-3 flex gap-2">
-        <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send(input)} placeholder="Instruct the AI Director (e.g. 'Regenerate scene 2', 'Generate subtitles in Hindi and English')..." className="flex-1 rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-amber-500" />
-        <button disabled={sending || !input.trim()} onClick={() => send(input)} className="px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-zinc-950 text-xs font-semibold flex items-center gap-1.5">
-          <Send className="w-3.5 h-3.5" /> Send
-        </button>
+      <div className="flex flex-wrap gap-2">
+        {SUGGESTIONS.map((s) => <button key={s} onClick={() => setInput(s)} className="chip hover:text-ink">{s}</button>)}
+      </div>
+      <div className="flex gap-2">
+        <input aria-label="Message to the director" className="field" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send(input)} placeholder="What should change?" />
+        <button disabled={sending || !input.trim()} onClick={() => send(input)} className="btn btn-primary"><Send className="w-4 h-4" /> Send</button>
       </div>
     </div>
   );

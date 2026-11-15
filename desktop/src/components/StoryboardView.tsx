@@ -1,4 +1,6 @@
-import { RefreshCw, Users } from "lucide-react";
+import { useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { humanDuration } from "../lib/progress";
 import type { ProjectDetail } from "../types/studio";
 
 interface Props {
@@ -7,56 +9,64 @@ interface Props {
 }
 
 export function StoryboardView({ project, onRegenerateScene }: Props) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const regenerate = async (id: string) => {
+    setBusyId(id);
+    try { await onRegenerateScene(id); } finally { setBusyId(null); }
+  };
+
+  if (project.scenes.length === 0) {
+    return <div className="card p-10 text-center"><div className="font-bold text-lg">No scenes yet</div><p className="text-slate mt-1">Scenes appear here once the script is written.</p></div>;
+  }
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-zinc-100">Storyboard & Character Continuity</h1>
-        <p className="text-xs text-zinc-400 mt-1">Hierarchical Chapters → Scenes → Shots. Regenerate any individual scene without rebuilding the entire film.</p>
-      </div>
+    <div className="space-y-8">
       {project.characters.length > 0 && (
-        <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800">
-          <div className="text-xs font-semibold text-zinc-200 flex items-center gap-2 mb-3"><Users className="w-4 h-4 text-amber-400" /> Character Continuity Bible</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <section>
+          <h2 className="font-bold mb-3">Characters</h2>
+          <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {project.characters.map((ch) => (
-              <div key={ch.id} className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-xs">
-                <div className="font-semibold text-amber-300">{ch.name} <span className="text-zinc-500 font-normal">({ch.role})</span></div>
-                <div className="text-zinc-400 mt-1">{ch.visual_description}</div>
-                <div className="text-[11px] text-zinc-500 mt-1">Voice ID: {ch.voice_id}</div>
-              </div>
+              <li key={ch.id} className="card p-4 text-[13px]">
+                <div className="font-bold">{ch.name} <span className="font-normal text-slate">· {ch.role}</span></div>
+                <p className="text-slate mt-1">{ch.visual_description}</p>
+                <div className="hint mt-1.5">Voice: {ch.voice_id}</div>
+              </li>
             ))}
-          </div>
-        </div>
+          </ul>
+        </section>
       )}
       {project.chapters.map((ch) => {
-        const chScenes = project.scenes.filter((s) => s.chapter_id === ch.id);
+        const scenes = project.scenes.filter((s) => s.chapter_id === ch.id);
         return (
-          <div key={ch.id} className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800 space-y-3">
-            <div>
-              <h2 className="text-sm font-semibold text-zinc-100">{ch.title}</h2>
-              <div className="text-[11px] text-zinc-500">Target: {ch.target_duration_sec}s · Status: {ch.status}</div>
+          <section key={ch.id}>
+            <div className="flex items-baseline justify-between mb-3">
+              <h2 className="font-bold">{ch.title}</h2>
+              <span className="hint">{scenes.length} scenes · about {humanDuration(ch.target_duration_sec)}</span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {chScenes.map((sc) => {
+            <ul className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {scenes.map((sc) => {
                 const shot = project.shots.find((sh) => sh.scene_id === sc.id);
+                const made = sc.quality_status === "generated";
                 return (
-                  <div key={sc.id} className="p-3.5 rounded-lg bg-zinc-950 border border-zinc-800 flex flex-col justify-between space-y-3">
+                  <li key={sc.id} className="card p-4 flex flex-col justify-between gap-3">
                     <div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-semibold text-zinc-200 truncate">{sc.title}</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">{sc.duration_sec}s</span>
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-semibold text-[13px]">{sc.title}</span>
+                        <span className="timecode text-xs text-slate shrink-0">{humanDuration(sc.duration_sec)}</span>
                       </div>
-                      <p className="text-[11px] text-zinc-400 mt-2 line-clamp-3">{sc.narration_segment}</p>
-                      {shot && <div className="text-[10px] text-zinc-500 mt-2">Shot: {shot.shot_type} · {shot.camera_movement} · {sc.render_engine}</div>}
+                      <p className="text-[13px] text-slate mt-2 line-clamp-4">{sc.narration_segment}</p>
+                      {shot && <div className="hint mt-2">{shot.shot_type}, {shot.camera_movement}</div>}
                     </div>
-                    <div className="flex items-center justify-between pt-2 border-t border-zinc-900">
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full ${sc.quality_status === "generated" ? "bg-emerald-500/15 text-emerald-300" : "bg-zinc-800 text-zinc-400"}`}>{sc.quality_status}</span>
-                      <button onClick={() => onRegenerateScene(sc.id)} className="flex items-center gap-1 text-[11px] text-amber-400 hover:text-amber-300"><RefreshCw className="w-3 h-3" /> Regenerate Scene</button>
+                    <div className="flex items-center justify-between pt-3 border-t border-rule">
+                      <span className={`chip ${made ? "chip-done" : ""}`}>{made ? "Made" : "Not made yet"}</span>
+                      <button onClick={() => regenerate(sc.id)} disabled={busyId !== null} className="btn btn-ghost text-[13px]">
+                        <RefreshCw className={`w-3.5 h-3.5 ${busyId === sc.id ? "animate-spin" : ""}`} /> {busyId === sc.id ? "Redoing…" : "Redo this scene"}
+                      </button>
                     </div>
-                  </div>
+                  </li>
                 );
               })}
-            </div>
-          </div>
+            </ul>
+          </section>
         );
       })}
     </div>

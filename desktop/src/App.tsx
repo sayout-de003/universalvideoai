@@ -6,11 +6,16 @@ import { DashboardView } from "./components/DashboardView";
 import { DirectorChatView } from "./components/DirectorChatView";
 import { ExportCenterView } from "./components/ExportCenterView";
 import { NewProjectView } from "./components/NewProjectView";
-import { Sidebar } from "./components/Sidebar";
+import { ProjectHeader } from "./components/ProjectHeader";
 import { ScriptRoomView } from "./components/ScriptRoomView";
+import { Sidebar } from "./components/Sidebar";
 import { StoryboardView } from "./components/StoryboardView";
 import { TimelineEditorView } from "./components/TimelineEditorView";
+import { VoiceCommandDialog } from "./components/VoiceCommandDialog";
+import { isIdle } from "./lib/progress";
 import type { HealthResponse, ProjectDetail, ProjectSummary, StudioTab } from "./types/studio";
+
+const PROJECT_TABS: StudioTab[] = ["director", "script_room", "storyboard", "backlot", "audio", "editor", "export"];
 
 export function App() {
   const [tab, setTab] = useState<StudioTab>("dashboard");
@@ -20,93 +25,145 @@ export function App() {
   const [storageUsedMb, setStorageUsedMb] = useState(0);
   const [activeProject, setActiveProject] = useState<ProjectDetail | null>(null);
   const [liveEvents, setLiveEvents] = useState<Array<Record<string, unknown>>>([]);
-  const [banner, setBanner] = useState<string | null>(null);
+  const [banner, setBanner] = useState<{ kind: "info" | "error"; text: string } | null>(null);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+
+  const anyRunning = projects.some((p) => p.status === "running");
+  const activeId = activeProject?.project.id;
+  const activeRunning = activeProject?.project.status === "running";
 
   const refreshGlobals = useCallback(async () => {
     try {
       const [h, e, p] = await Promise.all([studioClient.health(), studioClient.engines(), studioClient.listProjects()]);
       setHealth(h); setEngines(e); setProjects(p.projects); setStorageUsedMb(p.storage_used_mb);
-    } catch { /* backend booting */ }
+    } catch { /* backend still booting; the sidebar shows the engine as starting */ }
   }, []);
 
   const refreshActiveProject = useCallback(async (id: string) => {
     setActiveProject(await studioClient.getProject(id));
   }, []);
 
-  useEffect(() => {
-    refreshGlobals();
-    const timer = setInterval(refreshGlobals, 10000);
-    return () => clearInterval(timer);
-  }, [refreshGlobals]);
+  // Surface failures instead of leaving the user with a button that silently did nothing.
+  const act = useCallback(async (fn: () => Promise<unknown>, success?: string) => {
+    try {
+      await fn();
+      if (success) setBanner({ kind: "info", text: success });
+    } catch (err) {
+      setBanner({ kind: "error", text: err instanceof Error ? err.message : String(err) });
+    }
+  }, []);
 
   useEffect(() => {
-    if (!activeProject) return;
-    const pid = activeProject.project.id;
-    const es = new EventSource(`${API_BASE}/api/projects/${pid}/events`);
+    refreshGlobals();
+    const timer = setInterval(refreshGlobals, anyRunning ? 3000 : 10000);
+    return () => clearInterval(timer);
+  }, [refreshGlobals, anyRunning]);
+
+  useEffect(() => {
+    if (!activeId) return;
+    const es = new EventSource(`${API_BASE}/api/projects/${activeId}/events`);
     es.onmessage = (ev) => {
       try {
         const parsed = JSON.parse(ev.data);
         if (parsed.type !== "heartbeat") {
           setLiveEvents((prev) => [parsed, ...prev].slice(0, 50));
-          refreshActiveProject(pid);
+          refreshActiveProject(activeId).catch(() => undefined);
         }
-      } catch { /* ignore */ }
+      } catch { /* ignore malformed event */ }
     };
     return () => es.close();
-  }, [activeProject?.project.id, refreshActiveProject]);
+  }, [activeId, refreshActiveProject]);
 
-  const handleOpenProject = async (id: string) => {
+  // Fallback so progress keeps moving even if the event stream drops mid-run.
+  useEffect(() => {
+    if (!activeId || !activeRunning) return;
+    const t = setInterval(() => refreshActiveProject(activeId).catch(() => undefined), 4000);
+    return () => clearInterval(t);
+  }, [activeId, activeRunning, refreshActiveProject]);
+
+  const openProject = async (id: string) => {
     setLiveEvents([]);
-    await refreshActiveProject(id);
-    setTab("storyboard");
+    const detail = await studioClient.getProject(id);
+    setActiveProject(detail);
+    setTab(isIdle(detail.project.status) ? "script_room" : "backlot");
   };
 
   const handleCreateProject = async (payload: Record<string, unknown>, runImmediately: boolean) => {
     const created = await studioClient.createProject(payload);
+    setLiveEvents([]);
     setActiveProject(created);
     await refreshGlobals();
     if (runImmediately) {
       await studioClient.runProject(created.project.id, false);
+      await refreshActiveProject(created.project.id);
       setTab("backlot");
     } else {
-      setTab("storyboard");
+      setTab("script_room");
     }
   };
 
   const handleVoiceCommand = async (transcript: string) => {
     const pid = activeProject?.project.id;
     const res = await studioClient.voiceCommand(transcript, pid, false);
+    let reply = res;
     if (res.requires_confirmation) {
-      if (!window.confirm(String(res.message || "Confirm destructive voice command?"))) return;
-      const confirmedRes = await studioClient.voiceCommand(transcript, pid, true);
-      setBanner(String((confirmedRes.result as Record<string, unknown>)?.reply || "Voice command executed."));
-    } else {
-      setBanner(String((res.result as Record<string, unknown>)?.reply || "Voice command executed."));
+      if (!window.confirm(String(res.message || "This command changes or deletes work. Run it?"))) return;
+      reply = await studioClient.voiceCommand(transcript, pid, true);
     }
+    setBanner({ kind: "info", text: String((reply.result as Record<string, unknown>)?.reply || "Command done.") });
     await refreshGlobals();
     if (pid) await refreshActiveProject(pid);
   };
 
+  const pid = activeProject?.project.id ?? "";
+  const refresh = () => refreshActiveProject(pid);
+  const inProject = PROJECT_TABS.includes(tab) && Boolean(activeProject);
+  const view: StudioTab = !inProject && PROJECT_TABS.includes(tab) ? "dashboard" : tab;
+
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-100 overflow-hidden">
-      <Sidebar activeTab={tab} onSelectTab={setTab} hasActiveProject={Boolean(activeProject)} activeTitle={activeProject?.project.title} onVoiceCommand={handleVoiceCommand} />
-      <main className="flex-1 overflow-y-auto p-6">
-        {banner && (
-          <div className="mb-4 px-4 py-2.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-xs text-amber-200 flex items-center justify-between">
-            <span>{banner}</span>
-            <button onClick={() => setBanner(null)} className="text-amber-400 hover:underline">Dismiss</button>
-          </div>
-        )}
-        {tab === "dashboard" && <DashboardView health={health} engines={engines} projects={projects} storageUsedMb={storageUsedMb} onOpenProject={handleOpenProject} onNewProject={() => setTab("new_project")} onRefreshProjects={refreshGlobals} />}
-        {tab === "new_project" && <NewProjectView onCreate={handleCreateProject} />}
-        {tab === "director" && activeProject && <DirectorChatView project={activeProject} onSendMessage={async (msg, confirmed) => { const r = await studioClient.chatDirector(activeProject.project.id, msg, "text", confirmed); await refreshActiveProject(activeProject.project.id); return r; }} />}
-        {tab === "script_room" && activeProject && <ScriptRoomView project={activeProject} onRefresh={() => refreshActiveProject(activeProject.project.id)} onStartProduction={async () => { await studioClient.runProject(activeProject.project.id, false); setTab("backlot"); }} />}
-        {tab === "storyboard" && activeProject && <StoryboardView project={activeProject} onRegenerateScene={async (sceneId) => { await studioClient.regenerateScene(activeProject.project.id, { scene_id: sceneId }); await refreshActiveProject(activeProject.project.id); setBanner("Regenerated scene in isolation; manual timeline edits preserved."); }} />}
-        {tab === "backlot" && activeProject && <BacklotMonitorView project={activeProject} liveEvents={liveEvents} onRun={async () => { await studioClient.runProject(activeProject.project.id, false); await refreshActiveProject(activeProject.project.id); }} onPause={async () => { await studioClient.pauseProject(activeProject.project.id); await refreshActiveProject(activeProject.project.id); }} onResume={async () => { await studioClient.resumeProject(activeProject.project.id); await refreshActiveProject(activeProject.project.id); }} />}
-        {tab === "audio" && activeProject && <AudioStudioView project={activeProject} />}
-        {tab === "editor" && activeProject && <TimelineEditorView project={activeProject} onTimelineOp={async (op) => { await studioClient.timelineOp(activeProject.project.id, op); await refreshActiveProject(activeProject.project.id); }} onUndo={async () => { await studioClient.timelineUndo(activeProject.project.id); await refreshActiveProject(activeProject.project.id); }} onRedo={async () => { await studioClient.timelineRedo(activeProject.project.id); await refreshActiveProject(activeProject.project.id); }} />}
-        {tab === "export" && activeProject && <ExportCenterView project={activeProject} onExport={(body) => studioClient.exportProject(activeProject.project.id, body)} />}
+    <div className="flex h-screen overflow-hidden">
+      <Sidebar activeTab={view} onSelectTab={setTab} engineOnline={Boolean(health)} onVoiceCommand={() => setVoiceOpen(true)} />
+      <main className="flex-1 overflow-y-auto">
+        <div className="max-w-6xl mx-auto px-8 py-7">
+          {banner && (
+            <div role={banner.kind === "error" ? "alert" : "status"} className={`mb-5 px-4 py-2.5 rounded-lg text-[13px] flex items-center justify-between gap-4 border ${banner.kind === "error" ? "bg-live-soft border-live/40 text-live" : "bg-done-soft border-done/30 text-done"}`}>
+              <span className="min-w-0 break-words">{banner.text}</span>
+              <button onClick={() => setBanner(null)} className="font-semibold underline shrink-0">Dismiss</button>
+            </div>
+          )}
+          {view === "dashboard" && (
+            <DashboardView
+              health={health} engines={engines} projects={projects} storageUsedMb={storageUsedMb}
+              onOpenProject={(id) => act(() => openProject(id))}
+              onNewProject={() => setTab("new_project")}
+              onRefreshProjects={refreshGlobals}
+              onError={(text) => setBanner({ kind: "error", text })}
+            />
+          )}
+          {view === "new_project" && <NewProjectView onCreate={(p, run) => handleCreateProject(p, run).catch((err) => { setBanner({ kind: "error", text: err instanceof Error ? err.message : String(err) }); })} />}
+          {inProject && activeProject && (
+            <>
+              <ProjectHeader project={activeProject} tab={tab} onSelectTab={setTab} onBack={() => setTab("dashboard")} />
+              {tab === "director" && <DirectorChatView project={activeProject} onSendMessage={async (msg, confirmed) => { const r = await studioClient.chatDirector(pid, msg, "text", confirmed); await refresh(); return r; }} />}
+              {tab === "script_room" && <ScriptRoomView project={activeProject} onRefresh={refresh} onStartProduction={() => act(async () => { await studioClient.runProject(pid, false); await refresh(); setTab("backlot"); })} />}
+              {tab === "storyboard" && <StoryboardView project={activeProject} onRegenerateScene={(sceneId) => act(async () => { await studioClient.regenerateScene(pid, { scene_id: sceneId }); await refresh(); }, "Scene regenerated. Your manual timeline edits were kept.")} />}
+              {tab === "backlot" && (
+                <BacklotMonitorView
+                  project={activeProject} liveEvents={liveEvents}
+                  onRun={() => act(async () => { await studioClient.runProject(pid, false); await refresh(); })}
+                  onPause={() => act(async () => { await studioClient.pauseProject(pid); await refresh(); })}
+                  onResume={() => act(async () => { await studioClient.resumeProject(pid); await refresh(); })}
+                  onGoToScript={() => setTab("script_room")}
+                />
+              )}
+              {tab === "audio" && <AudioStudioView project={activeProject} />}
+              {tab === "editor" && <TimelineEditorView project={activeProject} onTimelineOp={(op) => act(async () => { await studioClient.timelineOp(pid, op); await refresh(); })} onUndo={() => act(async () => { await studioClient.timelineUndo(pid); await refresh(); })} onRedo={() => act(async () => { await studioClient.timelineRedo(pid); await refresh(); })} />}
+              {tab === "export" && <ExportCenterView project={activeProject} onExport={(body) => studioClient.exportProject(pid, body)} />}
+            </>
+          )}
+        </div>
       </main>
+      {voiceOpen && <VoiceCommandDialog onClose={() => setVoiceOpen(false)} onSubmit={(t) => act(() => handleVoiceCommand(t))} />}
     </div>
   );
 }

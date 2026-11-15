@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Cpu, Download, FileVideo, Folder, HardDrive, Layers, List, Mic, Play, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Cpu, Download, FileVideo, FolderOpen, HardDrive, Plus, Trash2 } from "lucide-react";
 import { API_BASE, studioClient } from "../api/client";
+import { humanDuration, progressOfSummary } from "../lib/progress";
 import type { HealthResponse, ProjectSummary } from "../types/studio";
 
 interface Props {
@@ -11,201 +12,149 @@ interface Props {
   onOpenProject: (id: string) => void;
   onNewProject: () => void;
   onRefreshProjects: () => Promise<void>;
+  onError: (message: string) => void;
 }
 
-type ProjectFolders = Record<string, Array<{ name: string; subpath: string; size_bytes: number; is_video: boolean }>>;
+type Folders = Record<string, Array<{ name: string; subpath: string; size_bytes: number; is_video: boolean }>>;
+const chipClass = { idle: "chip", live: "chip chip-live", done: "chip chip-done", hold: "chip chip-hold" } as const;
+const barClass = { idle: "bg-mute", live: "bg-live", done: "bg-done", hold: "bg-hold" } as const;
 
-export function DashboardView({ health, engines, projects, storageUsedMb, onOpenProject, onNewProject, onRefreshProjects }: Props) {
-  const [viewMode, setViewMode] = useState<"list" | "folders">("list");
-  const [expandedProject, setExpandedProject] = useState<string | null>(null);
-  const [foldersByProject, setFoldersByProject] = useState<Record<string, ProjectFolders>>({});
-  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+function fileSize(bytes: number) {
+  return bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
 
-  const activeCount = projects.filter((p) => p.status === "running" || p.status === "paused").length;
-  const completedCount = projects.filter((p) => p.status === "completed").length;
-  const failedCount = projects.filter((p) => p.status === "qa_failed" || p.status === "failed").length;
+export function DashboardView({ health, engines, projects, storageUsedMb, onOpenProject, onNewProject, onRefreshProjects, onError }: Props) {
+  const [filesOpen, setFilesOpen] = useState<string | null>(null);
+  const [folders, setFolders] = useState<Record<string, Folders>>({});
+  const [showSystem, setShowSystem] = useState(false);
+
   const renderEngines = (engines?.rendering_engines as Array<{ id: string; name: string; available: boolean }>) || [];
-  const omToolsCount = (engines?.openmontage_tools_count as number) || 0;
-  const omPipelines = (engines?.openmontage_pipelines as Array<{ name: string }>) || [];
+  const attempt = async (fn: () => Promise<unknown>) => {
+    try { await fn(); } catch (err) { onError(err instanceof Error ? err.message : String(err)); }
+  };
 
   const loadFiles = async (pid: string) => {
     const res = await studioClient.listProjectFiles(pid);
-    setFoldersByProject((prev) => ({ ...prev, [pid]: res.folders }));
+    setFolders((prev) => ({ ...prev, [pid]: res.folders }));
   };
-
-  const handleToggleProjectFolder = async (pid: string) => {
-    if (expandedProject === pid) {
-      setExpandedProject(null);
-      return;
-    }
-    setExpandedProject(pid);
+  const toggleFiles = (pid: string) => attempt(async () => {
+    if (filesOpen === pid) { setFilesOpen(null); return; }
+    setFilesOpen(pid);
     await loadFiles(pid);
-  };
-
-  const handleDeleteProject = async (pid: string, title: string) => {
-    if (!window.confirm(`Delete project "${title}" and all its folders/videos?`)) return;
-    await studioClient.deleteProject(pid);
-    if (expandedProject === pid) setExpandedProject(null);
+  });
+  const deleteProject = (p: ProjectSummary) => attempt(async () => {
+    if (!window.confirm(`Delete "${p.title}" and all of its videos? This can't be undone.`)) return;
+    await studioClient.deleteProject(p.id);
+    if (filesOpen === p.id) setFilesOpen(null);
     await onRefreshProjects();
-  };
-
-  const handleDeleteFile = async (pid: string, subpath: string, name: string) => {
-    if (!window.confirm(`Delete file "${name}"?`)) return;
+  });
+  const deleteFile = (pid: string, subpath: string, name: string) => attempt(async () => {
+    if (!window.confirm(`Delete "${name}"?`)) return;
     await studioClient.deleteProjectFile(pid, subpath);
     await loadFiles(pid);
     await onRefreshProjects();
-  };
+  });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-8">
+      <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-zinc-100">Studio Dashboard</h1>
-          <p className="text-xs text-zinc-400 mt-1">Real-time host telemetry, OpenMontage engine registry, OpenWhispr voice status, and productions.</p>
+          <h1 className="text-2xl font-bold tracking-tight">My videos</h1>
+          <p className="text-slate mt-1">Describe a video, review the script, then watch it get made.</p>
         </div>
-        <button onClick={onNewProject} className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-semibold transition">+ New Production</button>
+        <button onClick={onNewProject} className="btn btn-primary"><Plus className="w-4 h-4" /> New video</button>
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-4 rounded-xl bg-zinc-900/70 border border-zinc-800">
-          <div className="text-xs text-zinc-400">Projects</div>
-          <div className="text-2xl font-semibold mt-1">{projects.length}</div>
-          <div className="text-[11px] text-zinc-500 mt-1">{activeCount} active · {completedCount} completed · {failedCount} failed</div>
+
+      {projects.length === 0 ? (
+        <div className="card p-10 text-center">
+          <div className="text-lg font-bold">Nothing here yet</div>
+          <p className="text-slate mt-1 mb-5">Write one paragraph about the video you want. The studio drafts the script for your approval first.</p>
+          <button onClick={onNewProject} className="btn btn-primary"><Plus className="w-4 h-4" /> Start your first video</button>
         </div>
-        <div className="p-4 rounded-xl bg-zinc-900/70 border border-zinc-800">
-          <div className="text-xs text-zinc-400 flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5 text-amber-400" /> Host Hardware</div>
-          <div className="text-lg font-semibold mt-1">{health ? `${health.hardware.ram_gb} GB RAM` : "Probing..."}</div>
-          <div className="text-[11px] text-zinc-500 mt-1">{health ? `${health.hardware.arch} · ${health.hardware.gpu_backend}` : ""}</div>
-        </div>
-        <div className="p-4 rounded-xl bg-zinc-900/70 border border-zinc-800">
-          <div className="text-xs text-zinc-400 flex items-center gap-1.5"><HardDrive className="w-3.5 h-3.5 text-sky-400" /> Storage</div>
-          <div className="text-lg font-semibold mt-1">{storageUsedMb.toFixed(1)} MB used</div>
-          <div className="text-[11px] text-zinc-500 mt-1">{health ? `${health.hardware.disk_free_gb} GB free on disk` : ""}</div>
-        </div>
-        <div className="p-4 rounded-xl bg-zinc-900/70 border border-zinc-800">
-          <div className="text-xs text-zinc-400 flex items-center gap-1.5"><Mic className="w-3.5 h-3.5 text-emerald-400" /> OpenWhispr & OpenMontage</div>
-          <div className="text-lg font-semibold mt-1">{omToolsCount} Tools · {omPipelines.length} Pipelines</div>
-          <div className="text-[11px] text-zinc-500 mt-1">OpenWhispr Bridge: {health?.openwhispr.bridge_online ? "Online" : "Standby (Local Fallback Ready)"}</div>
-        </div>
-      </div>
-      <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800">
-        <div className="text-xs font-semibold text-zinc-200 flex items-center gap-2 mb-3"><Layers className="w-4 h-4 text-amber-400" /> Available Rendering & Generation Engines</div>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
-          {renderEngines.map((eng) => (
-            <div key={eng.id} className="p-3 rounded-lg bg-zinc-950/70 border border-zinc-800 flex items-center justify-between">
-              <div><div className="text-xs font-medium text-zinc-200">{eng.name}</div><div className="text-[11px] text-zinc-500">{eng.id}</div></div>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${eng.available ? "bg-emerald-500/15 text-emerald-300" : "bg-zinc-800 text-zinc-500"}`}>{eng.available ? "Ready" : "Unavailable"}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800">
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-xs font-semibold text-zinc-200">Productions & Project Files ({projects.length})</div>
-          <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5">
-            <button
-              onClick={() => setViewMode("list")}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium ${viewMode === "list" ? "bg-amber-500 text-zinc-950" : "text-zinc-400 hover:text-zinc-200"}`}
-            >
-              <List className="w-3.5 h-3.5" /> List View
-            </button>
-            <button
-              onClick={() => setViewMode("folders")}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium ${viewMode === "folders" ? "bg-amber-500 text-zinc-950" : "text-zinc-400 hover:text-zinc-200"}`}
-            >
-              <Folder className="w-3.5 h-3.5" /> Folder Structure
-            </button>
-          </div>
-        </div>
-        {projects.length === 0 ? (
-          <div className="text-xs text-zinc-500 py-8 text-center">No productions yet. Click <span className="text-amber-400">+ New Production</span> to create any video from natural language.</div>
-        ) : (
-          <div className="space-y-2">
-            {projects.map((p) => {
-              const isExpanded = viewMode === "folders" && expandedProject === p.id;
-              const folders = foldersByProject[p.id] || {};
-              return (
-                <div key={p.id} className="rounded-lg bg-zinc-950/80 border border-zinc-800 overflow-hidden">
-                  <div className="p-3 flex items-center justify-between gap-3 hover:bg-zinc-900/40 transition">
-                    <div
-                      onClick={() => (viewMode === "folders" ? handleToggleProjectFolder(p.id) : onOpenProject(p.id))}
-                      className="flex items-center gap-2.5 flex-1 cursor-pointer min-w-0"
-                    >
-                      {viewMode === "folders" && (
-                        isExpanded ? <ChevronDown className="w-4 h-4 text-amber-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-zinc-500 shrink-0" />
-                      )}
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-zinc-100 truncate">{p.title} <span className="text-[11px] text-zinc-500 font-mono">({p.id})</span></div>
-                        <div className="text-[11px] text-zinc-500 mt-0.5">{p.category} · {p.pipeline_name} · {p.render_engine} · {p.resolution} · {Math.round(p.target_duration_sec)}s</div>
+      ) : (
+        <ul className="space-y-3">
+          {projects.map((p) => {
+            const pr = progressOfSummary(p);
+            const open = filesOpen === p.id;
+            const files = folders[p.id] || {};
+            return (
+              <li key={p.id} className="card overflow-hidden">
+                <div className="p-4 flex items-center gap-4">
+                  <button onClick={() => onOpenProject(p.id)} className="flex-1 min-w-0 text-left">
+                    <div className="flex items-center gap-2.5">
+                      <span className="font-bold text-[15px] truncate">{p.title}</span>
+                      <span className={chipClass[pr.tone]}>{pr.tone === "live" && <span className="w-1.5 h-1.5 rounded-full bg-live tally" />}{pr.label}</span>
+                    </div>
+                    <div className="hint mt-0.5 truncate">
+                      {humanDuration(p.target_duration_sec)} · {p.aspect_ratio} · {p.category.replace(/_/g, " ")}
+                      {pr.scenesTotal > 0 && ` · ${pr.scenesDone} of ${pr.scenesTotal} scenes made`}
+                    </div>
+                    <div className="flex items-center gap-3 mt-3">
+                      <div className="flex-1 h-1.5 rounded-full bg-rule overflow-hidden" role="progressbar" aria-valuenow={pr.percent} aria-valuemin={0} aria-valuemax={100} aria-label={`${p.title} progress`}>
+                        <div className={`h-full rounded-full transition-all duration-700 ${barClass[pr.tone]}`} style={{ width: `${pr.percent}%` }} />
                       </div>
+                      <span className="timecode text-xs text-slate w-10 text-right">{pr.percent}%</span>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-[11px] px-2.5 py-1 rounded-full bg-zinc-800 text-zinc-300 capitalize">{p.status} ({p.current_stage})</span>
-                      <button onClick={() => onOpenProject(p.id)} title="Open Project" className="p-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-amber-400">
-                        <Play className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={() => handleDeleteProject(p.id, p.title)} title="Delete Project & Videos" className="p-1.5 rounded-md bg-zinc-900 hover:bg-red-950/60 border border-zinc-800 hover:border-red-500/40 text-zinc-400 hover:text-red-400">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                    <div className="hint mt-1">{pr.headline}</div>
+                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => onOpenProject(p.id)} className="btn btn-quiet">Open</button>
+                    <button onClick={() => toggleFiles(p.id)} className="btn btn-ghost" aria-expanded={open} title="Show files"><FolderOpen className="w-4 h-4" /> Files {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}</button>
+                    <button onClick={() => deleteProject(p)} className="btn btn-ghost btn-danger" aria-label={`Delete ${p.title}`} title="Delete video"><Trash2 className="w-4 h-4" /></button>
                   </div>
-                  {isExpanded && (
-                    <div className="border-t border-zinc-800/80 bg-zinc-950 px-4 py-3 space-y-2">
-                      {Object.entries(folders).map(([folderName, files]) => {
-                        const fKey = `${p.id}:${folderName}`;
-                        const fOpen = expandedFolders[fKey] ?? (folderName === "exports" || folderName === "deliverables" || folderName === "renders");
-                        return (
-                          <div key={folderName} className="rounded-md border border-zinc-800/70 bg-zinc-900/30">
-                            <button
-                              onClick={() => setExpandedFolders((prev) => ({ ...prev, [fKey]: !fOpen }))}
-                              className="w-full px-3 py-1.5 flex items-center justify-between text-xs text-zinc-300 hover:bg-zinc-900/60"
-                            >
-                              <span className="flex items-center gap-2 font-mono">
-                                {fOpen ? <ChevronDown className="w-3.5 h-3.5 text-zinc-500" /> : <ChevronRight className="w-3.5 h-3.5 text-zinc-500" />}
-                                <Folder className="w-3.5 h-3.5 text-amber-400" /> {folderName}/
-                              </span>
-                              <span className="text-[11px] text-zinc-500">{files.length} file(s)</span>
-                            </button>
-                            {fOpen && files.length > 0 && (
-                              <div className="border-t border-zinc-800/60 divide-y divide-zinc-800/40">
-                                {files.map((f) => (
-                                  <div key={f.subpath} className="px-4 py-1.5 flex items-center justify-between text-xs">
-                                    <span className="flex items-center gap-2 text-zinc-300 font-mono truncate">
-                                      {f.is_video && <FileVideo className="w-3.5 h-3.5 text-sky-400 shrink-0" />}
-                                      <span className="truncate">{f.name}</span>
-                                      <span className="text-[10px] text-zinc-500">({(f.size_bytes / 1024).toFixed(1)} KB)</span>
-                                    </span>
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                      <a
-                                        href={`${API_BASE}/api/projects/${p.id}/media/${f.subpath}?download=true`}
-                                        download={f.name}
-                                        className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100"
-                                        title="Download File"
-                                      >
-                                        <Download className="w-3.5 h-3.5" />
-                                      </a>
-                                      <button
-                                        onClick={() => handleDeleteFile(p.id, f.subpath, f.name)}
-                                        className="p-1 rounded hover:bg-red-950/60 text-zinc-400 hover:text-red-400"
-                                        title="Delete File / Video"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
                 </div>
-              );
-            })}
+                {open && (
+                  <div className="border-t border-rule bg-sunken px-4 py-3 space-y-3">
+                    {Object.keys(files).length === 0 && <div className="hint">No files yet.</div>}
+                    {Object.entries(files).filter(([, list]) => list.length > 0).map(([folder, list]) => (
+                      <div key={folder}>
+                        <div className="text-xs font-semibold text-slate mb-1">{folder}</div>
+                        <ul className="divide-y divide-rule card-sunken bg-panel">
+                          {list.map((f) => (
+                            <li key={f.subpath} className="px-3 py-1.5 flex items-center justify-between gap-3 text-[13px]">
+                              <span className="flex items-center gap-2 min-w-0">
+                                {f.is_video && <FileVideo className="w-3.5 h-3.5 text-done shrink-0" />}
+                                <span className="truncate">{f.name}</span>
+                                <span className="hint shrink-0">{fileSize(f.size_bytes)}</span>
+                              </span>
+                              <span className="flex items-center gap-1 shrink-0">
+                                <a href={`${API_BASE}/api/projects/${p.id}/media/${f.subpath}?download=true`} download={f.name} className="btn btn-ghost" aria-label={`Download ${f.name}`}><Download className="w-3.5 h-3.5" /></a>
+                                <button onClick={() => deleteFile(p.id, f.subpath, f.name)} className="btn btn-ghost btn-danger" aria-label={`Delete ${f.name}`}><Trash2 className="w-3.5 h-3.5" /></button>
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <section>
+        <button onClick={() => setShowSystem((v) => !v)} className="btn btn-ghost -ml-2" aria-expanded={showSystem}>
+          {showSystem ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} Studio details
+        </button>
+        {showSystem && (
+          <div className="card p-5 mt-2 space-y-5">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[13px]">
+              <div><div className="label flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5" /> This computer</div>{health ? `${health.hardware.cpu_cores} cores · ${health.hardware.ram_gb} GB memory · ${health.hardware.gpu_backend}` : "Checking…"}</div>
+              <div><div className="label flex items-center gap-1.5"><HardDrive className="w-3.5 h-3.5" /> Storage</div>{storageUsedMb.toFixed(1)} MB used by videos{health ? ` · ${health.hardware.disk_free_gb} GB free` : ""}</div>
+              <div><div className="label">Voice dictation</div>{health?.openwhispr.bridge_online ? "OpenWhispr connected" : "OpenWhispr not running — typing still works"}</div>
+            </div>
+            <div>
+              <div className="label">Video engines</div>
+              <div className="flex flex-wrap gap-2">
+                {renderEngines.map((e) => <span key={e.id} className={`chip ${e.available ? "chip-done" : ""}`}>{e.name}{e.available ? "" : " (not installed)"}</span>)}
+                {renderEngines.length === 0 && <span className="hint">Waiting for the studio engine…</span>}
+              </div>
+            </div>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
