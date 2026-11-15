@@ -217,6 +217,36 @@ def _build_beats(
     ]
 
 
+def _infer_defaults_from_idea(clean_idea: str) -> tuple[str, str, str, str, str, str]:
+    low = clean_idea.lower()
+    if "bicycle" in low or "ferry" in low or "bike" in low:
+        return (
+            "Agile courier with short dark-blue hair, oversized orange-red windbreaker, black cycling shorts, white sneakers, and a single canvas messenger bag with one sealed parcel strapped across the left shoulder",
+            "Daylit harbor waterfront quay with timber boardwalk, cobblestone side passage, slate-blue water, white graphic cloud streaks, and a departing car ferry with a lifting steel ramp",
+            "Steel-blue urban commuter bicycle with thin painted frame tubes, spoked wheels, and one canvas courier bag containing a single sealed parcel",
+            "reach the departing ferry before its ramp lifts",
+            "a delivery trolley rolling across the main quay lane as the departure bell rings",
+            "detouring through a narrow stepped passage and launching off the rising ramp onto the ferry deck",
+        )
+    if "rooftop" in low or "dive" in low or "tower" in low:
+        return (
+            "Lean parkour runner in a charcoal hooded windbreaker, ochre cargo trousers, and high-traction trainers with one yellow signal flare clipped to the right hip",
+            "Vertiginous skyscraper canyon at dusk with warm sodium street glow below, slate concrete facades, and a riveted rooftop water tower",
+            "Single yellow signal flare clipped to the right hip belt (count: 1)",
+            "drop from the rooftop water tower to the street junction below before the convoy passes",
+            "narrowing building ledges and crosswind updrafts inside the vertical canyon",
+            "a vertical free-fall drop with floors rushing upward followed by a heavy crouched street-plane landing",
+        )
+    return (
+        "Agile weathered rider in an ochre canvas windbreaker, charcoal riding trousers, scuffed leather boots, and wind-tousled dark hair with a single brass canister strapped across the left shoulder",
+        "Late-afternoon coastal industrial viaduct with slate-blue water, warm amber low sun, terracotta concrete piers, and bold gouache cloud banks",
+        "Matte-olive vintage scrambler motorcycle with twin painted headlamp shapes and one sealed brass courier canister on the left strap",
+        f"complete the mission ({clean_idea})",
+        "converging crosswind hazards and a closing barrier along the elevated span",
+        "a committed high-speed bank and ramp leap onto the lower causeway deck",
+    )
+
+
 def build_animated_short_package(
     idea: str,
     duration_sec: int = 30,
@@ -234,22 +264,11 @@ def build_animated_short_package(
     dur = _normalize_duration(duration_sec)
     aspect = aspect_ratio if aspect_ratio in ("16:9", "9:16") else "16:9"
 
-    hero = (hero_description or "").strip() or (
-        "Agile weathered rider in an ochre canvas windbreaker, charcoal riding trousers, "
-        "scuffed leather boots, and wind-tousled dark hair with a single brass canister strapped across the left shoulder"
-    )
-    world = (world_description or "").strip() or (
-        "Late-afternoon coastal industrial viaduct with slate-blue water, warm amber low sun, "
-        "terracotta concrete piers, and bold gouache cloud banks"
-    )
-    prop = (vehicle_or_prop or "").strip() or (
-        "Matte-olive vintage scrambler motorcycle with twin painted headlamp shapes and one sealed brass courier canister on the left strap"
-    )
-
-    goal = f"complete the mission ({clean_idea})"
-    obstacle = "converging crosswind hazards and a closing barrier along the elevated span"
-    response = "a committed high-speed bank and ramp leap onto the lower causeway deck"
-    payoff = "delivering the intact canister at the harbor terminus and coming to a grounded stop"
+    def_hero, def_world, def_prop, goal, obstacle, response = _infer_defaults_from_idea(clean_idea)
+    hero = (hero_description or "").strip() or def_hero
+    world = (world_description or "").strip() or def_world
+    prop = (vehicle_or_prop or "").strip() or def_prop
+    payoff = "completing the objective on the target deck and settling into a grounded wide composition"
 
     story_sentence = (
         f"Driven to {goal}, {hero.split(',')[0].lower()} confronts {obstacle}, "

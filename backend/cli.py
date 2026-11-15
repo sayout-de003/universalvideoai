@@ -46,9 +46,29 @@ def main() -> None:
     prod.add_argument("--subtitles", default="en", help="Comma-separated subtitle language codes")
     prod.add_argument("--bundle", action="store_true", help="Create a shareable ZIP bundle")
 
+    anim = sub.add_parser("animate", help="Compile a painterly 2D Animated Short Film package (/animate)")
+    anim.add_argument("idea", help="One-sentence film idea")
+    anim.add_argument("--duration", type=int, default=30, choices=[10, 15, 30], help="Duration in seconds (10, 15, or 30)")
+    anim.add_argument("--aspect", default="16:9", choices=["16:9", "9:16"], help="Aspect ratio (16:9 or 9:16)")
+    anim.add_argument("--project-id", default="animated_short", help="Project folder name under projects/ (creates references/, prompts/, renders/, final/)")
+    anim.add_argument("--execute-plates", action="store_true", help="Generate reference plates using configured cloud image provider")
+
     args = parser.parse_args()
     ensure_directories()
     init_db()
+
+    if args.command == "animate":
+        from backend.services.animated_short_film_service import build_animated_short_package
+
+        pkg = build_animated_short_package(
+            idea=args.idea,
+            duration_sec=args.duration,
+            aspect_ratio=args.aspect,
+            project_id=args.project_id,
+            execute_plates=args.execute_plates,
+        )
+        print(json.dumps(pkg, indent=2))
+        return
 
     if args.command == "produce":
         res_map = {"16:9": "1920x1080", "9:16": "1080x1920", "1:1": "1080x1080"}
