@@ -126,6 +126,12 @@ def create_project(req: ProjectCreateRequest) -> dict[str, Any]:
     effective_duration = req.target_duration_sec or prefs.get("target_duration_sec") or prefs.get("duration_sec")
     effective_visual_style = req.visual_style or prefs.get("visual_style")
     effective_prod_mode = str(req.production_mode or prefs.get("production_mode") or req.mode.value)
+    skills = list(req.skills or prefs.get("skills") or [])
+    blender_settings = dict(req.blender_settings or prefs.get("blender_settings") or {})
+    video_type = req.video_type or prefs.get("video_type")
+    pacing = req.pacing or prefs.get("pacing") or "balanced"
+    color_grade = req.color_grade or prefs.get("color_grade") or "natural"
+    quality_preset = req.quality_preset or prefs.get("quality_preset") or "high"
 
     parsed_script = parse_structured_screenplay(req.uploaded_script or req.prompt)
     info = classify_brief(req.prompt, float(effective_duration) if effective_duration is not None else parsed_script.get("duration_sec"))
@@ -150,6 +156,8 @@ def create_project(req: ProjectCreateRequest) -> dict[str, Any]:
         req.preferred_render_engine,
         visual_style=visual_style if user_chose_style else None,
     )
+    if "blender" in skills and not user_chose_engine:
+        render_engine = "blender"
 
     user_chose_voice = bool(req.voice_mode and req.voice_mode not in ("auto", ""))
     voice_mode = req.voice_mode or str(prefs.get("voice_mode") or "auto")
@@ -230,6 +238,19 @@ def create_project(req: ProjectCreateRequest) -> dict[str, Any]:
         },
     }
 
+    if skills:
+        ai_decisions["skills_orchestration"] = {
+            "selected": ", ".join(skills),
+            "chosen_by": "user",
+            "reasoning": f"User activated multi-skill pipeline orchestration: {', '.join(skills)}.",
+        }
+    if blender_settings:
+        ai_decisions["blender_3d_pipeline"] = {
+            "selected": f"Engine: {blender_settings.get('engine', 'Auto')} | Environment: {blender_settings.get('environment', 'Room')} | Lighting: {blender_settings.get('lighting', 'Studio Pro')} | Camera: {blender_settings.get('camera_motion', 'Push-In')}",
+            "chosen_by": "user",
+            "reasoning": "Configured custom headless Blender 3D animation, lighting, camera choreography, and PBR shaders.",
+        }
+
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO projects
@@ -249,6 +270,12 @@ def create_project(req: ProjectCreateRequest) -> dict[str, Any]:
                     "voice_mode": voice_mode,
                     "visual_style": visual_style,
                     "production_mode_policy": effective_prod_mode,
+                    "skills": skills,
+                    "blender_settings": blender_settings,
+                    "video_type": video_type,
+                    "pacing": pacing,
+                    "color_grade": color_grade,
+                    "quality_preset": quality_preset,
                     "ai_decisions": ai_decisions,
                 }),
                 now, now,
@@ -381,11 +408,16 @@ def _plan_hierarchy_and_bible(
     loc_id = f"loc_{uuid.uuid4().hex[:8]}"
     prop_id = f"prp_{uuid.uuid4().hex[:8]}"
 
-    clean_char_name = str(script_pkg.get("character_name") or title)[:48]
-    clean_char_desc = str(
-        script_pkg.get("character_description")
-        or f"Consistent visual identity for {clean_char_name}: locked facial features, wardrobe, silhouette, and cinematic color grading across all {len(generated_scenes)} scenes."
-    )[:240]
+    from backend.orchestration.audio_studio import sanitize_spoken_voiceover
+    from backend.services.document_parser import clean_markdown_inline
+
+    raw_char_name = clean_markdown_inline(str(script_pkg.get("character_name") or title))
+    clean_char_name = raw_char_name.splitlines()[0][:48].strip() or "Lead Subject"
+    raw_char_desc = str(script_pkg.get("character_description") or "")
+    if not raw_char_desc or "#" in raw_char_desc or "SCENE" in raw_char_desc or "Format:" in raw_char_desc:
+        clean_char_desc = f"Consistent visual identity for {clean_char_name}: locked facial features, wardrobe, silhouette, and cinematic color grading across all {len(generated_scenes)} scenes."
+    else:
+        clean_char_desc = clean_markdown_inline(raw_char_desc)[:240]
 
     with get_conn() as conn:
         conn.execute(
@@ -434,7 +466,8 @@ def _plan_hierarchy_and_bible(
             )
             for s_i, sc_spec in enumerate(chap_scenes):
                 scene_id = f"sc_{uuid.uuid4().hex[:8]}"
-                narration = plain_paragraphs[scene_idx_global] if scene_idx_global < len(plain_paragraphs) else sc_spec["narration_segment"]
+                raw_narr = plain_paragraphs[scene_idx_global] if scene_idx_global < len(plain_paragraphs) else sc_spec["narration_segment"]
+                narration = sanitize_spoken_voiceover(raw_narr)
                 raw_sc_title = str(sc_spec["title"]).strip()
                 scene_title = raw_sc_title if raw_sc_title.lower().startswith("scene ") else f"Scene {scene_idx_global + 1}: {raw_sc_title}"
                 vis_desc = sc_spec["visual_description"]
@@ -584,8 +617,9 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                     "Production Orchestrator",
                     f"Scene {idx + 1}/{len(scenes)} ({sc['title']}): Synthesizing {voice_label} voice + rendering via '{scene_engine}' (style '{scene_style}') with '{sc.get('transition') or 'smoothleft'}' transition.",
                 )
+                clean_narr = (sc.get("narration_segment") or "").strip()
                 tts_res = generate_tts(
-                    sc["narration_segment"] or sc["title"],
+                    clean_narr,
                     scene_wav,
                     voice_id=scene_voice,
                     language=project["language"],

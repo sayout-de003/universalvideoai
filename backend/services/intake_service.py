@@ -43,14 +43,14 @@ def parse_duration_seconds(text: str) -> float | None:
 
 
 def extract_clean_title(prompt: str) -> str:
-    from backend.services.document_parser import parse_structured_screenplay
+    from backend.services.document_parser import clean_markdown_inline, parse_structured_screenplay
 
     parsed = parse_structured_screenplay(prompt)
-    if parsed.get("title"):
-        return str(parsed["title"])[:80]
+    if parsed.get("title") and not str(parsed["title"]).lower().startswith("untitled"):
+        return clean_markdown_inline(str(parsed["title"]))[:80]
 
     first_line = prompt.strip().splitlines()[0] if prompt.strip() else ""
-    cleaned = re.sub(r"^[#*\s]+", "", first_line)
+    cleaned = clean_markdown_inline(first_line)
     cleaned = re.sub(r"\*Format:.*$", "", cleaned, flags=re.IGNORECASE).strip()
     cleaned = re.sub(
         r"^(?:i want to (?:create|make|produce)|create|make|produce|generate|build)\s+(?:a|an|the)?\s*",
@@ -64,6 +64,7 @@ def extract_clean_title(prompt: str) -> str:
         cleaned,
         flags=re.IGNORECASE,
     )
+    cleaned = re.sub(r"^(?:SCREENPLAY\s*:|TITLE\s*:|SCENE\s*\d*\s*[:\-]?)\s*", "", cleaned, flags=re.IGNORECASE)
     words = [w for w in re.split(r"\s+", cleaned.strip().rstrip(".,!?*#")) if w]
     title = " ".join(words[:9]).strip()
     return title[:1].upper() + title[1:] if title else "Untitled Production"

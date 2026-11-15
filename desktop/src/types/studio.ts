@@ -43,6 +43,25 @@ export interface ReferenceAssetItem {
   analysis?: Record<string, unknown>;
 }
 
+export interface BlenderSettings {
+  engine?: "auto" | "EEVEE" | "CYCLES" | "WORKBENCH";
+  environment?: "room" | "outdoor" | "cyberpunk" | "isometric" | "minimal";
+  lighting?: "three_point" | "film_noir" | "golden_hour" | "neon" | "softbox";
+  camera_motion?: "push_in" | "orbit" | "pan" | "crane" | "static";
+  animation?: "walk" | "run" | "idle" | "talk";
+  character_mesh_path?: string;
+  samples?: number;
+  lip_sync?: boolean;
+}
+
+export interface SkillOption {
+  id: string;
+  name: string;
+  tagline: string;
+  category: "3d" | "code_art" | "motion_graphics" | "pacing" | "audio" | "style";
+  recommendedWith?: string[];
+}
+
 export interface ProjectDetail {
   project: ProjectSummary & { workspace_dir: string; subtitle_languages: string[]; metadata?: Record<string, unknown> };
   creative_brief?: Record<string, unknown>;

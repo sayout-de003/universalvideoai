@@ -888,6 +888,57 @@ def api_v1_export_production(production_id: str, req: ExportRequest | None = Non
     return api_export_project(production_id, req or ExportRequest())
 
 
+# ---------------------------------------------------------------------------
+# Hypit Clean-Room Integration Endpoints (/api/v1/hypit/*)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/v1/hypit/author")
+def api_hypit_author(payload: dict[str, Any]) -> dict[str, Any]:
+    """Parse SVML / semantic script into structured segments, roles, moments, and clean dialogue."""
+    from backend.services.hypit_engine import parse_semantic_script
+    script_text = str(payload.get("script", "") or payload.get("source_text", "")).strip()
+    if not script_text:
+        raise HTTPException(status_code=400, detail="script or source_text is required")
+    return parse_semantic_script(script_text)
+
+
+@app.post("/api/v1/hypit/clone-reference")
+def api_hypit_clone_reference(payload: dict[str, Any]) -> dict[str, Any]:
+    """Deconstruct reference video and generate target production blueprint."""
+    from backend.services.hypit_engine import analyze_and_clone_reference
+    ref = str(payload.get("reference_video") or payload.get("url") or payload.get("path", "")).strip()
+    target_prompt = str(payload.get("prompt") or payload.get("target_prompt", "")).strip()
+    if not ref or not target_prompt:
+        raise HTTPException(status_code=400, detail="reference_video and prompt are required")
+    dur = payload.get("duration_sec") or payload.get("target_duration_sec")
+    return analyze_and_clone_reference(ref, target_prompt, target_duration_sec=float(dur) if dur else None, options=payload)
+
+
+@app.post("/api/v1/hypit/kinetic-caption")
+def api_hypit_kinetic_caption(payload: dict[str, Any]) -> dict[str, Any]:
+    """Generate word-synchronized kinetic caption files (SRT, VTT, JSON)."""
+    from backend.services.hypit_engine import generate_word_synchronized_captions
+    tokens = payload.get("tokens") or []
+    project_id = str(payload.get("project_id", "hypit_temp"))
+    out_dir = PROJECTS_DIR / project_id / "subtitles"
+    return generate_word_synchronized_captions(tokens, out_dir, style=str(payload.get("style", "kinetic_highlight")))
+
+
+@app.post("/api/v1/hypit/variants")
+def api_hypit_variants(payload: dict[str, Any]) -> dict[str, Any]:
+    """Generate production variants for an existing project reusing unchanged renders."""
+    from backend.services.hypit_engine import generate_production_variants
+    project_id = str(payload.get("project_id", "")).strip()
+    variants = payload.get("variants") or []
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+    res = generate_production_variants(project_id, variants)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Failed to generate variants"))
+    return res
+
+
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "desktop" / "dist"
 if _FRONTEND_DIST.is_dir():
     from fastapi.staticfiles import StaticFiles

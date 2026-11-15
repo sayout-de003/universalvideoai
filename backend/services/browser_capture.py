@@ -126,10 +126,12 @@ async function run() {
   }
 }
 
-run().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+run()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
 '''
 
 
@@ -140,7 +142,7 @@ def capture_html_to_mp4(
     height: int = 720,
     fps: int = 24,
     duration_sec: float = 4.0,
-    timeout_sec: int = 180,
+    timeout_sec: int = 90,
 ) -> dict[str, Any]:
     """Render deterministic HTML/WebGL/Canvas frames via headless Chromium and encode to MP4."""
     chrome_path = detect_chromium_path()
@@ -163,22 +165,25 @@ def capture_html_to_mp4(
         html_path.write_text(html_content, encoding="utf-8")
         script_path.write_text(_CDP_CAPTURE_JS, encoding="utf-8")
 
-        proc = subprocess.run(
-            [
-                node_path,
-                str(script_path),
-                chrome_path,
-                str(html_path),
-                str(frames_dir),
-                str(width),
-                str(height),
-                str(fps),
-                str(duration_sec),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=max(30, int(timeout_sec)),
-        )
+        try:
+            proc = subprocess.run(
+                [
+                    node_path,
+                    str(script_path),
+                    chrome_path,
+                    str(html_path),
+                    str(frames_dir),
+                    str(width),
+                    str(height),
+                    str(fps),
+                    str(duration_sec),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=max(30, int(timeout_sec)),
+            )
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "status": "UNAVAILABLE", "reason": "Headless Chromium capture timed out"}
         if proc.returncode != 0:
             return {"ok": False, "status": "UNAVAILABLE", "reason": (proc.stderr or proc.stdout)[-400:]}
 

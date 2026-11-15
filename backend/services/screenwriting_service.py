@@ -47,14 +47,18 @@ _DRAMATIC_PERSPECTIVES = (
 
 
 def _extract_subject(prompt: str) -> str:
-    from backend.services.document_parser import parse_structured_screenplay
+    from backend.orchestration.audio_studio import sanitize_spoken_voiceover
+    from backend.services.document_parser import clean_markdown_inline, parse_structured_screenplay
 
     parsed = parse_structured_screenplay(prompt)
-    if parsed.get("subject"):
-        return str(parsed["subject"])[:80]
+    if parsed.get("subject") and not str(parsed["subject"]).lower().startswith("untitled"):
+        sub = clean_markdown_inline(str(parsed["subject"]))
+        if sub and len(sub) >= 2:
+            return sub[:80]
 
     first_line = prompt.strip().splitlines()[0] if prompt.strip() else ""
-    s = re.sub(r"^[#*\s]+(?:screenplay\s*:\s*)?", "", first_line, flags=re.IGNORECASE)
+    s = clean_markdown_inline(first_line)
+    s = re.sub(r"^[#*\s]+(?:screenplay\s*:\s*)?", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\*Format:.*$", "", s, flags=re.IGNORECASE).split("*")[0].split("|")[0].strip()
     s = re.sub(
         r"^.*?\b(?:short\s+film|feature\s+film|documentary|video|film|reel|short|commercial|ad|explainer|trailer|course|story|screenplay)\s*(?::|about|on|for|of)\s*",
@@ -75,15 +79,19 @@ def _extract_subject(prompt: str) -> str:
         s,
         flags=re.IGNORECASE,
     )
+    s = re.sub(r"^(?:SCREENPLAY\s*:|TITLE\s*:|SCENE\s*\d*\s*[:\-]?)\s*", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\s+", " ", s).strip().rstrip(".!?*#")
     if len(s.split()) > 6:
         s = _short_subject(s, max_words=4)
-    return (s if len(s) >= 3 else first_line.strip().rstrip(".!?"))[:90]
+    cleaned_first = clean_markdown_inline(first_line).strip().rstrip(".!?")
+    return clean_markdown_inline(s if len(s) >= 3 else cleaned_first)[:90] or "Cinematic Production"
 
 
 def _short_subject(subject: str, max_words: int = 4) -> str:
-    words = [w for w in subject.split() if w.lower() not in ("a", "an", "the")]
-    return " ".join(words[:max_words]) or subject[:32]
+    from backend.services.document_parser import clean_markdown_inline
+    clean = clean_markdown_inline(subject)
+    words = [w for w in clean.split() if w.lower() not in ("a", "an", "the", "#", "*")]
+    return " ".join(words[:max_words]) or clean[:32] or "the story"
 
 
 def _trim_to_word_budget(text: str, max_words: int) -> str:
@@ -403,7 +411,8 @@ def develop_and_write_screenplay(
     production_mode: str | None = None,
 ) -> dict[str, Any]:
     """Run Story Architect -> Hollywood Screenplay Architect -> Script Doctor -> Evaluator."""
-    from backend.services.document_parser import parse_structured_screenplay
+    from backend.orchestration.audio_studio import sanitize_spoken_voiceover
+    from backend.services.document_parser import clean_markdown_inline, parse_structured_screenplay
 
     fmt_spec = get_format_spec(format_key)
     parsed_script = parse_structured_screenplay(uploaded_script or prompt)
@@ -419,6 +428,7 @@ def develop_and_write_screenplay(
         scenes = list(parsed_script["scenes"])
         author_mode = "user_structured_screenplay"
         for i, sc in enumerate(scenes):
+            sc["narration_segment"] = sanitize_spoken_voiceover(sc.get("narration_segment", ""))
             cast = _cast_voice_for_scene(i, len(scenes), fmt_spec["writer_type"], uploaded_script or prompt, voice_mode=voice_mode)
             eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"], visual_style=visual_style)
             if voice_mode in ("male", "female", "dual"):
@@ -503,10 +513,16 @@ def develop_and_write_screenplay(
             "",
         ])
 
+    char_desc = str(parsed_script.get("character_description") or "")
+    if not char_desc or "#" in char_desc or "SCENE" in char_desc or "Format:" in char_desc:
+        char_desc = f"Locked visual identity for {subject}: consistent facial features, silhouette, wardrobe, and color palette across every scene."
+    else:
+        char_desc = clean_markdown_inline(char_desc)[:240]
+
     return {
         "subject": subject,
-        "character_name": parsed_script.get("character_name") or subject[:48],
-        "character_description": parsed_script.get("character_description") or f"Locked visual identity for {subject}: consistent facial features, silhouette, wardrobe, and color palette across every scene.",
+        "character_name": clean_markdown_inline(str(parsed_script.get("character_name") or subject))[:48],
+        "character_description": char_desc,
         "format_spec": fmt_spec,
         "author_mode": author_mode,
         "logline": logline,

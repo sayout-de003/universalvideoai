@@ -58,6 +58,30 @@ VISUAL_STYLE_PROFILES: dict[str, dict[str, Any]] = {
         "render_settings": {"fps": 24, "color_grade": "warm_cinema", "vignette": True},
         "qa_checks": ["stream_integrity", "warm_storybook_palette", "transition_smoothness"],
     },
+    "anime": {
+        "id": "anime",
+        "label": "Anime / Manga",
+        "description": "Japanese animation style: cel-shaded characters, expressive anime eyes and hair, dynamic speed lines, and cinematic lighting.",
+        "supported_engines": ["hyperframes", "remotion", "opentoonz", "ffmpeg"],
+        "default_engine": "hyperframes",
+        "hyperframes_theme": "anime",
+        "asset_requirements": ["anime_character_sheet", "cel_shaded_layers", "speed_line_overlays"],
+        "animation_techniques": ["cel_shading", "dynamic_camera_pan", "anime_blink_and_hair_flow", "speed_line_bursts"],
+        "render_settings": {"fps": 24, "motion_blur": False, "palette": "vibrant_anime"},
+        "qa_checks": ["stream_integrity", "character_continuity", "cel_shading_contrast"],
+    },
+    "cartoon_2d": {
+        "id": "cartoon_2d",
+        "label": "Classic 2D Cartoon",
+        "description": "Classic 2D cartoon / western animation: bold ink contours, expressive cartoon features, squash & stretch character motion, and pop palettes.",
+        "supported_engines": ["hyperframes", "remotion", "opentoonz", "ffmpeg"],
+        "default_engine": "hyperframes",
+        "hyperframes_theme": "cartoon_2d",
+        "asset_requirements": ["cartoon_model_sheet", "ink_outline_layers", "comic_burst_accents"],
+        "animation_techniques": ["squash_and_stretch", "bold_outline_character_motion", "comic_action_lines"],
+        "render_settings": {"fps": 24, "motion_blur": False, "palette": "bold_cartoon"},
+        "qa_checks": ["stream_integrity", "character_continuity", "ink_line_sharpness"],
+    },
 }
 
 
@@ -69,13 +93,17 @@ def resolve_visual_style_profile(style_or_prompt: str | None = None, fallback_pr
     combined = f"{raw} {(fallback_prompt or '').strip().lower()}".strip()
     if not combined or combined == "auto":
         return "2d_illustrated"
+    if any(k in combined for k in ("anime", "manga", "ghibli", "shonen", "shojo", "otaku", "japanese animation", "makoto shinkai", "kyoto animation")):
+        return "anime"
+    if any(k in combined for k in ("cartoon", "comic", "classic cartoon", "toon", "looney", "disney 2d", "western animation", "comic book")):
+        return "cartoon_2d"
     if any(k in combined for k in ("pixel", "8-bit", "8bit", "16-bit", "16bit", "sprite", "retro game", "libresprite")):
         return "pixel_art"
     if any(k in combined for k in ("storybook", "watercolor", "hand-drawn", "hand_drawn", "hand drawn", "pencil", "sketch", "children's book", "illustrated book")):
         return "hand_drawn_storybook"
     if any(k in combined for k in ("3d", "blender", "stylized 3d", "3d_stylized", "cgi", "threejs", "rigged")):
         return "3d_stylized"
-    if any(k in combined for k in ("2d", "illustrated", "2d_illustrated", "vector", "cartoon", "opentoonz", "cutout")):
+    if any(k in combined for k in ("2d", "illustrated", "2d_illustrated", "vector", "cutout", "opentoonz")):
         return "2d_illustrated"
     return "2d_illustrated"
 

@@ -41,17 +41,25 @@ def get_blender_status() -> dict[str, Any]:
 
 
 def _detect_environment(scene: dict[str, Any]) -> str:
-    explicit = str(scene.get("environment_type") or "").strip().lower()
-    if explicit in ("room", "indoor", "outdoor"):
-        return "room" if explicit in ("room", "indoor") else "outdoor"
+    b_settings = scene.get("blender_settings") or {}
+    explicit = str(scene.get("environment_type") or b_settings.get("environment") or "").strip().lower()
+    if explicit in ("room", "indoor", "outdoor", "cyberpunk", "isometric", "minimal"):
+        return "room" if explicit == "indoor" else explicit
     text = f"{scene.get('environment_ref') or ''} {scene.get('visual_description') or ''} {scene.get('title') or ''}".lower()
+    if any(k in text for k in ("cyberpunk", "neon", "sci-fi", "scifi", "future", "matrix")):
+        return "cyberpunk"
+    if any(k in text for k in ("isometric", "diagram", "orthographic", "schematic")):
+        return "isometric"
+    if any(k in text for k in ("minimal", "gallery", "void", "museum", "clean")):
+        return "minimal"
     if any(k in text for k in ("room", "office", "studio", "hall", "corridor", "lab", "indoor", "interior", "apartment")):
         return "room"
     return "outdoor"
 
 
 def _detect_animation(scene: dict[str, Any]) -> str:
-    explicit = str(scene.get("animation_name") or "").strip().lower()
+    b_settings = scene.get("blender_settings") or {}
+    explicit = str(scene.get("animation_name") or b_settings.get("animation") or "").strip().lower()
     if explicit:
         return explicit
     text = f"{scene.get('visual_description') or ''} {scene.get('generation_prompt') or ''} {scene.get('title') or ''}".lower()
@@ -101,10 +109,15 @@ def render_blender_scene(
     frames_dir.mkdir(parents=True, exist_ok=True)
     duration = max(2.0, float(scene.get("duration_sec", 4.0) or 4.0))
     total_frames = max(24, int(round(duration * fps)))
+    b_settings = scene.get("blender_settings") or {}
     env_type = _detect_environment(scene)
     anim_name = _detect_animation(scene)
+    blender_engine_choice = str(scene.get("blender_engine") or b_settings.get("engine") or "auto").strip().upper()
+    lighting_preset = str(scene.get("lighting_preset") or b_settings.get("lighting") or "three_point").strip().lower()
+    camera_motion = str(scene.get("camera_motion") or b_settings.get("camera_motion") or "push_in").strip().lower()
+    render_samples = int(scene.get("render_samples") or b_settings.get("samples") or 32)
 
-    mesh_raw = scene.get("character_mesh_path")
+    mesh_raw = scene.get("character_mesh_path") or b_settings.get("character_mesh_path")
     char_mesh = Path(mesh_raw) if mesh_raw else (_DEFAULT_HUMANOID if _DEFAULT_HUMANOID.is_file() else None)
     if char_mesh and not char_mesh.is_file():
         return {"ok": False, "status": "FAILED", "engine": "blender", "reason": f"Character mesh not found: {char_mesh}"}
@@ -128,7 +141,16 @@ import bpy
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
 engines = [e.identifier for e in scene.render.bl_rna.properties['engine'].enum_items]
-scene.render.engine = 'BLENDER_EEVEE_NEXT' if 'BLENDER_EEVEE_NEXT' in engines else ('BLENDER_EEVEE' if 'BLENDER_EEVEE' in engines else 'CYCLES')
+wanted_engine = "{blender_engine_choice}"
+if wanted_engine == "CYCLES" and "CYCLES" in engines:
+    scene.render.engine = "CYCLES"
+    if hasattr(scene, "cycles"):
+        scene.cycles.samples = min(64, max(8, {render_samples}))
+elif wanted_engine == "WORKBENCH" and "BLENDER_WORKBENCH" in engines:
+    scene.render.engine = "BLENDER_WORKBENCH"
+else:
+    scene.render.engine = 'BLENDER_EEVEE_NEXT' if 'BLENDER_EEVEE_NEXT' in engines else ('BLENDER_EEVEE' if 'BLENDER_EEVEE' in engines else 'CYCLES')
+
 scene.render.resolution_x = {width}
 scene.render.resolution_y = {height}
 scene.render.fps = {fps}
@@ -147,11 +169,20 @@ if bg:
     if "{env_type}" == "room":
         bg.inputs[0].default_value = (0.04, 0.05, 0.07, 1.0)
         bg.inputs[1].default_value = 0.6
+    elif "{env_type}" == "cyberpunk":
+        bg.inputs[0].default_value = (0.02, 0.02, 0.05, 1.0)
+        bg.inputs[1].default_value = 0.4
+    elif "{env_type}" == "isometric":
+        bg.inputs[0].default_value = (0.08, 0.10, 0.13, 1.0)
+        bg.inputs[1].default_value = 0.9
+    elif "{env_type}" == "minimal":
+        bg.inputs[0].default_value = (0.12, 0.13, 0.15, 1.0)
+        bg.inputs[1].default_value = 1.0
     else:
         bg.inputs[0].default_value = (0.16, 0.28, 0.48, 1.0)
         bg.inputs[1].default_value = 1.1
 
-def make_mat(name, color, metallic=0.1, roughness=0.5):
+def make_mat(name, color, metallic=0.1, roughness=0.5, emission=None):
     m = bpy.data.materials.new(name)
     m.use_nodes = True
     bsdf = m.node_tree.nodes.get("Principled BSDF")
@@ -159,16 +190,19 @@ def make_mat(name, color, metallic=0.1, roughness=0.5):
         bsdf.inputs["Base Color"].default_value = (*color, 1.0)
         bsdf.inputs["Metallic"].default_value = metallic
         bsdf.inputs["Roughness"].default_value = roughness
+        if emission and "Emission Color" in bsdf.inputs:
+            bsdf.inputs["Emission Color"].default_value = (*emission, 1.0)
+            if "Emission Strength" in bsdf.inputs:
+                bsdf.inputs["Emission Strength"].default_value = 3.5
     return m
 
-# Environment builder (room or outdoor)
+# Environment builder
 bpy.ops.mesh.primitive_plane_add(size=30, location=(0, 0, 0))
 ground = bpy.context.active_object
 ground.name = "Ground"
-ground.data.materials.append(make_mat("GroundMat", (0.14, 0.15, 0.17) if "{env_type}" == "room" else (0.12, 0.22, 0.11), roughness=0.75))
 
 if "{env_type}" == "room":
-    # Back wall, side wall, architectural pillars
+    ground.data.materials.append(make_mat("GroundMat", (0.14, 0.15, 0.17), roughness=0.75))
     bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 4.5, 2.5))
     wall_back = bpy.context.active_object
     wall_back.scale = (14.0, 0.3, 5.0)
@@ -183,8 +217,27 @@ if "{env_type}" == "room":
         bpy.ops.mesh.primitive_cylinder_add(radius=0.25, depth=5.0, location=(px, 3.8, 2.5))
         pil = bpy.context.active_object
         pil.data.materials.append(make_mat(f"Pillar_{{px}}", (0.35, 0.36, 0.40), metallic=0.3, roughness=0.35))
+elif "{env_type}" == "cyberpunk":
+    ground.data.materials.append(make_mat("CyberFloor", (0.05, 0.06, 0.08), metallic=0.85, roughness=0.18))
+    for idx, sx in enumerate([-4.5, 4.5]):
+        bpy.ops.mesh.primitive_cube_add(size=1, location=(sx, 2.5, 2.5))
+        strip = bpy.context.active_object
+        strip.scale = (0.2, 6.0, 5.0)
+        strip.data.materials.append(make_mat(f"Strip_{{idx}}", (0.02, 0.03, 0.05), metallic=0.5, roughness=0.3))
+        # Neon edge accent
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.06, depth=5.0, location=(sx + (0.15 if sx < 0 else -0.15), 2.5, 2.5))
+        neon_rod = bpy.context.active_object
+        neon_rod.data.materials.append(make_mat(f"NeonRod_{{idx}}", (0.1, 0.9, 1.0) if sx < 0 else (1.0, 0.1, 0.7), emission=(0.1, 0.9, 1.0) if sx < 0 else (1.0, 0.1, 0.7)))
+elif "{env_type}" == "isometric":
+    ground.data.materials.append(make_mat("IsoGround", (0.11, 0.13, 0.16), roughness=0.45))
+    bpy.ops.mesh.primitive_cylinder_add(radius=1.8, depth=0.25, location=(0, 0, 0.125))
+    ped = bpy.context.active_object
+    ped.data.materials.append(make_mat("Pedestal", (0.25, 0.28, 0.34), metallic=0.4, roughness=0.25))
+elif "{env_type}" == "minimal":
+    ground.data.materials.append(make_mat("VoidGround", (0.10, 0.10, 0.12), roughness=0.8))
 else:
-    # Outdoor environmental markers (trees / monoliths along path)
+    # Outdoor environmental markers
+    ground.data.materials.append(make_mat("GroundMat", (0.12, 0.22, 0.11), roughness=0.85))
     for idx, (tx, ty) in enumerate([(-3.5, 3.2), (3.5, 4.0), (-5.0, -1.5), (4.8, -2.0)]):
         bpy.ops.mesh.primitive_cylinder_add(radius=0.18, depth=2.2, location=(tx, ty, 1.1))
         trunk = bpy.context.active_object
@@ -222,7 +275,6 @@ elif meshes:
     for m in meshes:
         m.parent = char_root
 else:
-    # Fallback rigged primitive humanoid only if no mesh was supplied
     bpy.ops.mesh.primitive_capsule_add(radius=0.25, depth=1.5, location=(0, 0, 0.9))
     hero = bpy.context.active_object
     hero.data.materials.append(make_mat("FallbackChar", ({r:.3f}, {g:.3f}, {b:.3f}), roughness=0.4))
@@ -271,24 +323,77 @@ if lip_frames and meshes:
                         kb.value = float(entry.get("open", 0.0))
                         kb.keyframe_insert(data_path="value", frame=fr)
 
-# 3-Point Studio Lighting
-bpy.ops.object.light_add(type="AREA", location=(3.8, -3.5, 4.2))
-key = bpy.context.active_object
-key.data.energy = 750
-key.data.size = 2.8
+# Lighting Setup based on preset
+light_mode = "{lighting_preset}"
+if light_mode == "film_noir":
+    bpy.ops.object.light_add(type="SPOT", location=(4.0, -3.0, 3.8))
+    key = bpy.context.active_object
+    key.data.energy = 950
+    key.data.spot_size = math.radians(45)
+    bpy.ops.object.light_add(type="AREA", location=(-2.0, 3.5, 2.5))
+    rim = bpy.context.active_object
+    rim.data.energy = 380
+    rim.data.color = (0.7, 0.8, 1.0)
+elif light_mode == "golden_hour":
+    bpy.ops.object.light_add(type="SUN", location=(5.0, -6.0, 2.5))
+    sun = bpy.context.active_object
+    sun.data.energy = 4.5
+    sun.data.color = (1.0, 0.75, 0.45)
+    bpy.ops.object.light_add(type="AREA", location=(-3.0, -2.0, 3.0))
+    fill = bpy.context.active_object
+    fill.data.energy = 160
+    fill.data.color = (0.45, 0.65, 0.95)
+elif light_mode == "neon":
+    bpy.ops.object.light_add(type="AREA", location=(3.5, -3.0, 3.2))
+    cyan_l = bpy.context.active_object
+    cyan_l.data.energy = 650
+    cyan_l.data.color = (0.1, 0.9, 1.0)
+    bpy.ops.object.light_add(type="AREA", location=(-3.5, -2.0, 2.5))
+    mag_l = bpy.context.active_object
+    mag_l.data.energy = 600
+    mag_l.data.color = (1.0, 0.1, 0.85)
+elif light_mode == "softbox":
+    bpy.ops.object.light_add(type="AREA", location=(0.0, -2.5, 4.5))
+    soft = bpy.context.active_object
+    soft.data.energy = 650
+    soft.data.size = 5.0
+else:
+    # 3-Point Studio Pro
+    bpy.ops.object.light_add(type="AREA", location=(3.8, -3.5, 4.2))
+    key = bpy.context.active_object
+    key.data.energy = 750
+    key.data.size = 2.8
 
-bpy.ops.object.light_add(type="AREA", location=(-3.5, -2.5, 2.8))
-fill = bpy.context.active_object
-fill.data.energy = 240
-fill.data.color = (0.75, 0.85, 1.0)
+    bpy.ops.object.light_add(type="AREA", location=(-3.5, -2.5, 2.8))
+    fill = bpy.context.active_object
+    fill.data.energy = 240
+    fill.data.color = (0.75, 0.85, 1.0)
 
-bpy.ops.object.light_add(type="AREA", location=(0.0, 4.0, 3.6))
-rim = bpy.context.active_object
-rim.data.energy = 420
-rim.data.color = (0.45, 0.72, 1.0)
+    bpy.ops.object.light_add(type="AREA", location=(0.0, 4.0, 3.6))
+    rim = bpy.context.active_object
+    rim.data.energy = 420
+    rim.data.color = (0.45, 0.72, 1.0)
 
-# Camera tracking character
-bpy.ops.object.camera_add(location=(2.6, -4.2, 1.65))
+# Camera Choreography & Tracking
+motion = "{camera_motion}"
+if motion == "orbit":
+    start_pos = (3.2, -3.6, 1.75)
+    end_pos = (-2.8, -3.6, 1.75)
+elif motion == "pan":
+    start_pos = (-3.2, -3.8, 1.60)
+    end_pos = (2.4, -3.8, 1.60)
+elif motion == "crane":
+    start_pos = (2.2, -4.2, 0.75)
+    end_pos = (1.8, -3.4, 2.60)
+elif motion == "static" or "{env_type}" == "isometric":
+    start_pos = (3.0, -3.0, 2.4)
+    end_pos = (3.0, -3.0, 2.4)
+else:
+    # push_in (default)
+    start_pos = (2.6, -4.2, 1.65)
+    end_pos = (1.6, -3.6, 1.55)
+
+bpy.ops.object.camera_add(location=start_pos)
 cam = bpy.context.active_object
 scene.camera = cam
 track = cam.constraints.new(type="TRACK_TO")
@@ -296,9 +401,9 @@ track.target = char_root
 track.track_axis = "TRACK_NEGATIVE_Z"
 track.up_axis = "UP_Y"
 
-cam.location = (2.6, -4.2, 1.65)
+cam.location = start_pos
 cam.keyframe_insert(data_path="location", frame=1)
-cam.location = (1.6, -3.6, 1.55)
+cam.location = end_pos
 cam.keyframe_insert(data_path="location", frame={total_frames})
 
 bpy.ops.render.render(animation=True)
@@ -336,6 +441,9 @@ bpy.ops.render.render(animation=True)
             "output": str(output_mp4),
             "environment_type": env_type,
             "animation_name": anim_name,
+            "blender_engine": blender_engine_choice,
+            "lighting_preset": lighting_preset,
+            "camera_motion": camera_motion,
             "character_mesh": str(char_mesh) if char_mesh else "procedural_fallback",
             "frames_rendered": total_frames,
         }
