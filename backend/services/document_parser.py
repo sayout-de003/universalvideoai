@@ -20,8 +20,9 @@ from typing import Any
 
 
 def clean_markdown_inline(text: str) -> str:
-    """Strip markdown formatting tokens (#, *, **, quotes) from a single-line title or field."""
+    """Strip markdown formatting tokens (#, *, **, quotes, screenplay labels) from a single-line title or field."""
     s = re.sub(r"^#+\s*", "", (text or "").strip())
+    s = re.sub(r"^(?:SCREENPLAY\s*:|TITLE\s*:|SCENE\s*\d*\s*[:\-]?)\s*", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)
     s = re.sub(r"\*([^*]+)\*", r"\1", s)
     s = s.strip().strip('"').strip("'").strip("“”‘’").strip()
@@ -29,15 +30,17 @@ def clean_markdown_inline(text: str) -> str:
 
 
 def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
-    """Parse structured screenplay markdown/text (like `# SCREENPLAY: ... ## SCENE 1: ...`) into clean metadata and scenes."""
+    """Parse structured screenplay markdown/text (markdown, Fountain, AV, multi-scene) into clean metadata and scenes."""
+    from backend.orchestration.audio_studio import sanitize_spoken_voiceover
+
     text = (raw_text or "").strip()
     if not text:
         return {"is_structured": False, "title": "Untitled Production", "subject": "Untitled Production", "scenes": []}
 
     # Normalize inline single-line pasted screenplays where ## SCENE or **VISUAL:** were pasted without newlines
-    normalized = re.sub(r"\s*(##+\s*SCENE\s+\d+)", r"\n\1", text, flags=re.IGNORECASE)
+    normalized = re.sub(r"\s*(##+\s*SCENE\s+\d+|(?:\n|^)\s*SCENE\s+\d+|(?:\n|^)\s*Scene\s+\d+)", r"\n\1", text, flags=re.IGNORECASE)
     normalized = re.sub(
-        r"\s*(\*\*(?:VISUAL|CAMERA|LIGHTING|NARRATION\s*/?\s*VO|NARRATION|VO|ON-SCREEN\s+TEXT|SOUND)\s*:\*\*)",
+        r"\s*(\*\*(?:VISUAL|CAMERA|LIGHTING|NARRATION\s*/?\s*VO|NARRATION|VO|ON-SCREEN\s+TEXT|SOUND|DIALOGUE|SPEECH)\s*:\*\*)",
         r"\n\1",
         normalized,
         flags=re.IGNORECASE,
@@ -45,13 +48,13 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
 
     # 1. Extract clean title
     title = ""
-    m_scr = re.search(r"#\s*SCREENPLAY\s*:\s*([^\n*#]+)", normalized, flags=re.IGNORECASE)
+    m_scr = re.search(r"#?\s*SCREENPLAY\s*:\s*([^\n*#|]+)", normalized, flags=re.IGNORECASE)
     if m_scr:
         title = clean_markdown_inline(m_scr.group(1))
     else:
         first_line = normalized.splitlines()[0].strip()
-        if first_line.startswith("#"):
-            title = clean_markdown_inline(re.split(r"\*Format:|\| Runtime:", first_line, flags=re.IGNORECASE)[0])
+        if first_line.startswith("#") or first_line.lower().startswith("title:"):
+            title = clean_markdown_inline(re.split(r"\*Format:|\| Runtime:|\| Voice:", first_line, flags=re.IGNORECASE)[0])
 
     # 2. Extract header metadata (*Format: ... | Runtime: 28.0s | Voice: ...*)
     header_format = None
@@ -74,44 +77,65 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
         elif "male" in v_low and "female" not in v_low:
             header_voice_gender = "male"
 
-    # 3. Parse `## SCENE N: TITLE (5.3s)` blocks
-    scene_pattern = re.compile(
-        r"##+\s*SCENE\s+(\d+)\s*:\s*([^\n(]+?)(?:\((\d+(?:\.\d+)?)\s*s\))?\s*(?:\n|$)(.*?)(?=(?:\n##+\s*SCENE\s+\d+)|\Z)",
-        flags=re.IGNORECASE | re.DOTALL,
+    # 3. Universal Scene Block Matching
+    header_regex = re.compile(
+        r"(?:^|\n)\s*((?:##+\s*SCENE\s+\d+|SCENE\s+\d+|Scene\s+\d+|\[\s*SCENE\s+\d+\s*\]|\d+\.\s*Scene\b|EXT\.|INT\.)[^\n]*)",
+        re.IGNORECASE,
     )
-    matches = list(scene_pattern.finditer(normalized))
+    headers = list(header_regex.finditer(normalized))
     scenes: list[dict[str, Any]] = []
 
-    for idx, m in enumerate(matches):
-        sc_title = clean_markdown_inline(m.group(2)) or f"Scene {idx + 1}"
-        sc_dur = float(m.group(3)) if m.group(3) else 5.0
-        body = m.group(4) or ""
+    for idx, h in enumerate(headers):
+        h_line = h.group(1).strip()
+        body_start = h.end()
+        body_end = headers[idx + 1].start() if idx + 1 < len(headers) else len(normalized)
+        body = normalized[body_start:body_end].strip()
+
+        # Extract explicit duration from header if present, e.g. (5.3s)
+        sc_dur: float | None = None
+        dur_m = re.search(r"\((\d+(?:\.\d+)?)\s*s\)", h_line, flags=re.IGNORECASE)
+        if dur_m:
+            sc_dur = float(dur_m.group(1))
+
+        # Extract clean scene title
+        title_raw = re.sub(r"\((\d+(?:\.\d+)?)\s*s\)", "", h_line, flags=re.IGNORECASE)
+        title_raw = re.sub(r"^(?:##+\s*)?(?:SCENE\s+\d+|Scene\s+\d+|\[\s*SCENE\s+\d+\s*\]|\d+\.\s*Scene\b)[:\-]?\s*", "", title_raw, flags=re.IGNORECASE)
+        sc_title = clean_markdown_inline(title_raw) or f"Scene {idx + 1}"
 
         def _extract_field(field_regex: str) -> str:
+            # Check bolded **FIELD:** or unbolded FIELD:
             fm = re.search(
-                rf"\*\*(?:{field_regex})\s*:\*\*\s*(.*?)(?=\n\*\*[A-Z/\s-]+\s*:\*\*|\Z)",
+                rf"(?:\*\*)?(?:{field_regex})(?:\*\*)?\s*:\s*(.*?)(?=\n(?:\*\*)?[A-Z/\s-]+(?:\*\*)?\s*:|\n##|\Z)",
                 body,
                 flags=re.IGNORECASE | re.DOTALL,
             )
             return clean_markdown_inline(fm.group(1)) if fm else ""
 
-        visual = _extract_field(r"VISUAL")
+        visual = _extract_field(r"VISUAL|VISUALS?|ACTION|DESC|DESCRIPTION|VIDEO")
         camera_raw = _extract_field(r"CAMERA")
         lighting = _extract_field(r"LIGHTING") or "dramatic_cinematic"
-        raw_narration = _extract_field(r"NARRATION\s*/?\s*VO|NARRATION|VO")
+        raw_narration = _extract_field(r"NARRATION\s*/?\s*VO|NARRATION|VO|DIALOGUE|SPEECH|SPOKEN|NARRATOR|AUDIO")
         if not raw_narration:
-            # Fallback search for unbolded or variant VO cues
-            m_alt_vo = re.search(r"(?:NARRATION\s*/?\s*VO|NARRATION|VO|SPOKEN|DIALOGUE)\s*:\s*(.*?)(?=\n[A-Z/\s-]+:|\Z)", body, flags=re.IGNORECASE | re.DOTALL)
-            raw_narration = m_alt_vo.group(1).strip() if m_alt_vo else ""
+            # Look for dialogue in quotes or character speech
+            m_quote = re.search(r'"([^"]{6,})"', body)
+            if m_quote:
+                raw_narration = m_quote.group(1).strip()
+            else:
+                m_colon_dial = re.search(r"(?:^[A-Z0-9_\s]{2,20}\s*:\s*)([^\n]+)", body, flags=re.MULTILINE)
+                if m_colon_dial:
+                    raw_narration = m_colon_dial.group(1).strip()
 
-        from backend.orchestration.audio_studio import sanitize_spoken_voiceover
-        narration = sanitize_spoken_voiceover(raw_narration) if raw_narration else ""
+        narration = sanitize_spoken_voiceover(raw_narration, default="") if raw_narration else ""
         on_screen_text = _extract_field(r"ON-SCREEN\s+TEXT|TEXT") or sc_title
-        sound_cue = _extract_field(r"SOUND") or "ambient_swell"
-
-        # Clean whoosh out of sound_cue
+        on_screen_text = clean_markdown_inline(on_screen_text)
+        sound_cue = _extract_field(r"SOUND|SFX") or "ambient_swell"
         if "whoosh" in sound_cue.lower():
             sound_cue = "subtle_chime"
+
+        # Auto-compute duration based on narration word count if not explicit
+        if not sc_dur:
+            w_count = len(narration.split()) if narration else 0
+            sc_dur = max(3.0, round(w_count / 2.5 + 0.8, 1)) if w_count > 0 else 4.0
 
         shot_type, cam_angle, cam_move = "medium", "eye_level", "slow_push_in"
         if camera_raw:
@@ -141,7 +165,7 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
             "order_index": idx,
             "title": sc_title.title() if sc_title.isupper() else sc_title,
             "purpose": f"Deliver '{sc_title}'",
-            "narration_segment": narration or f"{sc_title}.",
+            "narration_segment": narration,
             "visual_description": visual or f"Cinematic 2D/3D animated scene depicting {sc_title}.",
             "shot_type": shot_type,
             "camera_angle": cam_angle,

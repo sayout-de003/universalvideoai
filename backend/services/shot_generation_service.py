@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Any
 
+from backend.db import get_conn
 from backend.integrations.antigravity_adapter import AntigravityAdapter
 from backend.integrations.blender_adapter import render_blender_scene
 from backend.providers.image.router import generate_cloud_image
@@ -346,6 +348,16 @@ def generate_shot_for_scene(
                     return res
 
         elif tier == "blender":
+            if "blender_settings" not in scene and scene.get("project_id"):
+                try:
+                    with get_conn() as conn:
+                        prow = conn.execute("SELECT metadata_json FROM projects WHERE id=?", (scene["project_id"],)).fetchone()
+                        if prow and prow[0]:
+                            meta = json.loads(prow[0])
+                            if "blender_settings" in meta:
+                                scene["blender_settings"] = meta["blender_settings"]
+                except Exception:
+                    pass
             res = render_blender_scene(scene, output_mp4, output_mp4.parent / f"work_{scene.get('id', 'sc')}", width=width, height=height, fps=fps)
             attempts.append({"tier": tier, "status": res.get("status"), "reason": res.get("reason")})
             if res.get("ok"):

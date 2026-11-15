@@ -58,32 +58,37 @@ def resolve_neural_voice(voice_id: str = "default", language: str = "en") -> tup
     return edge_voice, gender
 
 
-def sanitize_spoken_voiceover(raw_text: str) -> str:
+def sanitize_spoken_voiceover(raw_text: str, default: str = "Silence.") -> str:
     """Sanitize raw text for TTS voice-over so that markdown formatting, scene headers,
     visual descriptions, camera cues, and technical metadata are NEVER read aloud.
     Only pure human dialogue and narration are spoken."""
     text = (raw_text or "").strip()
     if not text:
-        return "Silence."
+        return default
+
+    # If text is solely a header / screenplay banner / scene label with no dialogue, never speak it
+    if re.match(r"^(?:#+\s*)*(?:SCREENPLAY|SCENE|ACT|EPISODE|CHAPTER|PART)\b", text, flags=re.IGNORECASE):
+        if not re.search(r"\b(?:NARRATION|VO|SPOKEN|DIALOGUE)\b", text, flags=re.IGNORECASE):
+            return default
 
     # Normalize single-line pasted screenplay text where ## SCENE or **VISUAL:** lack newlines
     normalized = re.sub(r"\s*(##+\s*SCENE\s+\d+)", r"\n\1", text, flags=re.IGNORECASE)
     normalized = re.sub(
-        r"\s*(\*\*(?:VISUAL|CAMERA|LIGHTING|NARRATION\s*/?\s*VO|NARRATION|VO|ON-SCREEN\s+TEXT|SOUND)\s*:\*\*)",
+        r"\s*(\*\*(?:VISUAL|CAMERA|LIGHTING|NARRATION\s*/?\s*VO|NARRATION|VO|ON-SCREEN\s+TEXT|SOUND|AUDIO|DIALOGUE|SPEECH)\s*:\*\*)",
         r"\n\1",
         normalized,
         flags=re.IGNORECASE,
     )
 
-    # 1. If explicit NARRATION/VO tags exist, isolate only their spoken contents
+    # 1. If explicit NARRATION/VO/DIALOGUE tags exist, isolate only their spoken contents
     vo_matches = re.findall(
-        r"\*\*(?:NARRATION\s*/?\s*VO|NARRATION|VO)(?:\s*\([^)]*\))?\s*:\*\*\s*(.*?)(?=\n\*\*[A-Z/\s-]+\s*:\*\*|\n##|\Z)",
+        r"\*\*(?:NARRATION\s*/?\s*VO|NARRATION|VO|DIALOGUE|SPOKEN|SPEECH)(?:\s*\([^)]*\))?\s*:\*\*\s*(.*?)(?=\n\*\*[A-Z/\s-]+\s*:\*\*|\n##|\Z)",
         normalized,
         flags=re.IGNORECASE | re.DOTALL,
     )
     if not vo_matches:
         vo_matches = re.findall(
-            r"(?:^|\n)\s*(?:NARRATION\s*/?\s*VO|NARRATION|VO)(?:\s*\([^)]*\))?\s*:\s*(.*?)(?=\n[A-Z/\s-]+:|\n##|\Z)",
+            r"(?:^|\n)\s*(?:NARRATION\s*/?\s*VO|NARRATION|VO|DIALOGUE|SPOKEN|SPEECH|NARRATOR)(?:\s*\([^)]*\))?\s*:\s*(.*?)(?=\n[A-Z/\s-]+:|\n##|\Z)",
             normalized,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -103,34 +108,43 @@ def sanitize_spoken_voiceover(raw_text: str) -> str:
             # Format/Runtime headers
             if re.match(r"^\*?\s*Format\s*:.*?Runtime\s*:", line_s, flags=re.IGNORECASE):
                 continue
-            # Screenplay field blocks
-            if re.match(r"^\*\*(?:VISUAL|CAMERA|LIGHTING|SOUND|ON-SCREEN\s+TEXT|COMPOSITION|PROPS?|LOCATION)\s*:\*\*", line_s, flags=re.IGNORECASE):
+            if re.match(r"^(?:#+\s*)*(?:SCREENPLAY|SCENE\s+\d+|ACT\s+\d+)\b", line_s, flags=re.IGNORECASE):
                 continue
-            if re.match(r"^(?:VISUAL|CAMERA|LIGHTING|SOUND|ON-SCREEN\s+TEXT|COMPOSITION|PROPS?|LOCATION)\s*:", line_s, flags=re.IGNORECASE):
+            # Screenplay field blocks
+            if re.match(r"^(?:\*\*)?(?:VISUAL|CAMERA|LIGHTING|SOUND|ON-SCREEN\s+TEXT|COMPOSITION|PROPS?|LOCATION|TRANSITION|EFFECTS?|MUSIC|SFX)(?:\*\*)?\s*:", line_s, flags=re.IGNORECASE):
+                continue
+            # Sluglines and transitions
+            if re.match(r"^(?:EXT\.|INT\.|EST\.|FADE\s+IN|CUT\s+TO|DISSOLVE\s+TO)\b", line_s, flags=re.IGNORECASE):
                 continue
             lines.append(line_s)
-        text = " ".join(lines) if lines else text
+        text = " ".join(lines) if lines else ""
 
-    # 3. Strip semantic moment tags @{...} and action cues
+    if not text.strip():
+        return default
+
+    # 3. Strip character speaker prefixes like 'NARRATOR: ' or 'NAPOLEON (calmly): '
+    text = re.sub(r"^(?:[A-Z0-9_\s]{2,24}(?:\s*\([^)]*\))?\s*:\s*)+", "", text)
+
+    # 4. Strip semantic moment tags @{...} and action cues
     text = re.sub(r"@\{[^}]+\}", "", text)
     # Strip sound cues and stage directions in brackets/parentheses
-    text = re.sub(r"\[(?:SFX|Sound|Music|Audio|Applause|Laughter|Beat|Pause|Ambient)[^\]]*\]", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\((?:SFX|Sound|Music|Audio|Applause|Laughter|Beat|Pause|Ambient)[^)]*\)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[(?:SFX|Sound|Music|Audio|Applause|Laughter|Beat|Pause|Ambient|V\.?O\.?|O\.?S\.?)[^\]]*\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\((?:SFX|Sound|Music|Audio|Applause|Laughter|Beat|Pause|Ambient|V\.?O\.?|O\.?S\.?|calmly|smiling|whispering|shouting|crying)[^)]*\)", "", text, flags=re.IGNORECASE)
     # Strip timing tags like (5.3s) or [5.3s]
     text = re.sub(r"\(\s*\d+(?:\.\d+)?\s*s\s*\)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\[\s*\d+(?:\.\d+)?\s*s\s*\]", "", text, flags=re.IGNORECASE)
 
-    # 4. Strip markdown tokens (#, *, _, `, ~, |, >)
+    # 5. Strip markdown tokens (#, *, _, `, ~, |, >)
     text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
     text = re.sub(r"\*([^*]+)\*", r"\1", text)
     text = re.sub(r"_([^_]+)_", r"\1", text)
     text = re.sub(r"^[#*\s>~`\-]+", "", text)
     text = re.sub(r"[#*`~|]", "", text)
 
-    # 5. Clean up surrounding quotes and multiple spaces
+    # 6. Clean up surrounding quotes and multiple spaces
     text = re.sub(r"\s+", " ", text).strip()
-    text = text.strip('"\'“”‘’')
-    return text.strip() or "Silence."
+    text = text.strip("\"'“”‘’")
+    return text if text else default
 
 
 def generate_tts(
@@ -146,6 +160,14 @@ def generate_tts(
     output_wav.parent.mkdir(parents=True, exist_ok=True)
     clean_text = sanitize_spoken_voiceover(text)
     free_mode = is_free_open_source_mode(production_mode)
+
+    if not clean_text or clean_text.lower() in ("silence.", "silence"):
+        if shutil.which("ffmpeg"):
+            subprocess.run(
+                ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "2.0", "-ar", "44100", "-ac", "2", str(output_wav)],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            return {"success": True, "path": str(output_wav), "duration_sec": 2.0, "provider": "silence", "license": "procedural_silence"}
 
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not free_mode and openai_key and voice_id.startswith("openai:"):
@@ -389,8 +411,9 @@ def generate_subtitles(scenes_with_timings: list[dict[str, Any]], output_dir: Pa
         vtt_lines: list[str] = ["WEBVTT", ""]
         idx = 1
         for sc in scenes_with_timings:
-            text = (sc.get("narration_segment") or sc.get("script_segment") or "").strip()
-            if not text:
+            raw_t = (sc.get("narration_segment") or sc.get("script_segment") or "").strip()
+            text = sanitize_spoken_voiceover(raw_t, default="")
+            if not text or text.lower() == "silence.":
                 continue
             if lang != "en":
                 text = f"[{lang.upper()}] {text}"

@@ -1,5 +1,23 @@
 import { useRef, useState } from "react";
-import { ChevronDown, ChevronRight, FileText, Link2, Play, Plus, ShieldCheck, Sparkles, Trash2, Upload } from "lucide-react";
+import {
+  Box,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  FileText,
+  Film,
+  Layers,
+  Play,
+  Plus,
+  ShieldCheck,
+  Sliders,
+  Sparkles,
+  Trash2,
+  Upload,
+  Video,
+  Wand2,
+} from "lucide-react";
 import { studioClient, type ExtractedFileResult } from "../api/client";
 
 export interface PendingRefUpload {
@@ -14,9 +32,9 @@ interface Props {
 
 const VISUAL_STYLES = [
   { id: "", label: "Let AI decide", note: "Matches visual style from your prompt & references" },
-  { id: "pixel_art", label: "Pixel Art", note: "Crisp 16-bit sprites, stepped palette, LibreSprite / Canvas" },
+  { id: "3d_stylized", label: "3D Stylized (Blender)", note: "Rigged 3D characters, PBR lighting, Headless Blender / Three.js" },
   { id: "2d_illustrated", label: "2D Illustrated", note: "Vector & cel-shaded character animation, HyperFrames / Remotion" },
-  { id: "3d_stylized", label: "3D Stylized", note: "Rigged 3D characters, PBR lighting, Headless Blender / Three.js" },
+  { id: "pixel_art", label: "Pixel Art", note: "Crisp 16-bit sprites, stepped palette, LibreSprite / Canvas" },
   { id: "hand_drawn_storybook", label: "Hand-Drawn Storybook", note: "Watercolor parchment, sketchy ink contours, OpenToonz / Canvas" },
 ];
 
@@ -34,58 +52,221 @@ const REFERENCE_ROLES = [
   { id: "brand_reference", label: "Brand / Logo" },
 ];
 
-const LENGTHS: Array<{ label: string; sec: string }> = [
+const SKILLS_LIST = [
+  {
+    id: "blender",
+    name: "Headless Blender 3D",
+    tagline: "Rigged 3D humanoid character, PBR lighting & custom 3D sets",
+    category: "3d",
+    icon: "box",
+  },
+  {
+    id: "animated-short-film",
+    name: "Animated Short Film",
+    tagline: "Painterly cinematic style-lock & shot-by-shot causal planning",
+    category: "style",
+    icon: "film",
+  },
+  {
+    id: "lemo-opuscar",
+    name: "Lemo-Opuscar Code Films",
+    tagline: "99 code-driven film aesthetics (Impasto, Watercolor, Ukiyo-e, Neon)",
+    category: "code_art",
+    icon: "wand",
+  },
+  {
+    id: "anatomy",
+    name: "Anatomy Isometric Explainer",
+    tagline: "Isometric precision technical schematics & physical exploded teardowns",
+    category: "3d",
+    icon: "layers",
+  },
+  {
+    id: "remotion",
+    name: "Remotion Kinetic HUD",
+    tagline: "Code-driven motion graphics, dynamic charts & animated typography",
+    category: "motion_graphics",
+    icon: "sliders",
+  },
+  {
+    id: "openmontage",
+    name: "OpenMontage Pacing",
+    tagline: "Fast rhythmic cuts, multi-clip speed ramps & pacing",
+    category: "pacing",
+    icon: "clock",
+  },
+  {
+    id: "voicestudio",
+    name: "VoiceStudio & OpenWhispr",
+    tagline: "Dual neural conversational actors & word-level subtitle sync",
+    category: "audio",
+    icon: "video",
+  },
+  {
+    id: "hyperframes",
+    name: "HyperFrames Vector Cel",
+    tagline: "2D character animation & multiplane depth parallax",
+    category: "motion_graphics",
+    icon: "film",
+  },
+  {
+    id: "hypit",
+    name: "Hypit Semantic Composition",
+    tagline: "Narrative semantic timeline alignment & adaptive beat ranking",
+    category: "pacing",
+    icon: "layers",
+  },
+];
+
+const VIDEO_TYPES = [
+  { id: "", label: "Let AI decide (Auto-classify from prompt)" },
+  { id: "fiction_short_films", label: "Cinematic Short Film (3-Act Narrative Arc)" },
+  { id: "3d_animation", label: "3D Character & Environment Animation" },
+  { id: "technical_explainer", label: "Technical Explainer & System Anatomy" },
+  { id: "code_film", label: "Code-Driven Generative Film (Lemo-Opuscar)" },
+  { id: "saas_product_demos", label: "SaaS & Tech Product Demo" },
+  { id: "documentaries", label: "Evidence-Led Hollywood Documentary" },
+  { id: "youtube_shorts", label: "High-Retention Short / Reel / TikTok (9:16)" },
+  { id: "brand_commercials", label: "Brand Commercial / Advertisement" },
+  { id: "educational_videos", label: "Educational Course & Concept Explainer" },
+  { id: "music_videos", label: "Beat-Mapped Music Video Experience" },
+];
+
+const BLENDER_ENGINES = [
+  { id: "auto", label: "Auto (EEVEE-Next with Cycles fallback)" },
+  { id: "EEVEE", label: "EEVEE-Next (Real-time PBR, Ultra Fast)" },
+  { id: "CYCLES", label: "Cycles (Photorealistic Ray-Tracing / Global Illumination)" },
+  { id: "WORKBENCH", label: "Workbench (Clean Technical Clay Draft)" },
+];
+
+const BLENDER_ENVIRONMENTS = [
+  { id: "room", label: "Studio Room (Architectural walls & pillars)" },
+  { id: "outdoor", label: "Outdoor Nature (Stylized trees & landscape)" },
+  { id: "cyberpunk", label: "Cyberpunk Corridor (Neon strips & dark metallic)" },
+  { id: "isometric", label: "Isometric Stage (Elevated platform & grid)" },
+  { id: "minimal", label: "Minimal Void (Clean infinite studio cyclorama)" },
+];
+
+const BLENDER_LIGHTING = [
+  { id: "three_point", label: "3-Point Studio Pro (Key, Fill, Rim)" },
+  { id: "film_noir", label: "Cinematic Film Noir (High contrast moody spot)" },
+  { id: "golden_hour", label: "Golden Hour Sun (Warm low-angle sun)" },
+  { id: "neon", label: "Cyberpunk Neon (Cyan & Magenta dual-tone)" },
+  { id: "softbox", label: "High-Key Softbox (Evenly diffused softbox)" },
+];
+
+const BLENDER_CAMERAS = [
+  { id: "push_in", label: "Cinematic Dolly Push-In" },
+  { id: "orbit", label: "Tracking Arc / Orbit" },
+  { id: "pan", label: "Horizontal Tracking Pan" },
+  { id: "crane", label: "Ascending Crane / Low Angle" },
+  { id: "static", label: "Static Hero Framing" },
+];
+
+const BLENDER_ANIMATIONS = [
+  { id: "walk", label: "Walk Cycle across set" },
+  { id: "run", label: "Sprint / Run" },
+  { id: "idle", label: "Hero Idle Stance" },
+  { id: "talk", label: "Talking & Conversational Gestures" },
+];
+
+const PACING_OPTIONS = [
+  { id: "fast", label: "Fast & Dynamic (~2-3s / shot)", secPerShot: 2.5 },
+  { id: "balanced", label: "Balanced Narrative (~4-6s / shot)", secPerShot: 5.0 },
+  { id: "cinematic", label: "Cinematic Slow Paced (~7-10s / shot)", secPerShot: 8.0 },
+];
+
+const LENGTH_PRESETS = [
   { label: "Let AI decide", sec: "" },
-  { label: "30 sec", sec: "30" },
-  { label: "1 min", sec: "60" },
-  { label: "5 min", sec: "300" },
-  { label: "10 min", sec: "600" },
-  { label: "20 min", sec: "1200" },
+  { label: "15s Short", sec: "15" },
+  { label: "30s Ad", sec: "30" },
+  { label: "60s Reel", sec: "60" },
+  { label: "2 min Explainer", sec: "120" },
+  { label: "5 min Story", sec: "300" },
+  { label: "10 min Deep Dive", sec: "600" },
 ];
+
 const SHAPES = [
-  { id: "16:9", label: "Widescreen", note: "YouTube / Cinema, 16:9", res: "1920x1080" },
-  { id: "9:16", label: "Vertical", note: "Shorts / Reels, 9:16", res: "1080x1920" },
-  { id: "1:1", label: "Square", note: "Feed posts, 1:1", res: "1080x1080" },
+  { id: "16:9", label: "Widescreen 16:9", note: "YouTube / Cinema", res: "1920x1080" },
+  { id: "9:16", label: "Vertical 9:16", note: "Shorts / Reels / TikTok", res: "1080x1920" },
+  { id: "1:1", label: "Square 1:1", note: "Instagram / Feed", res: "1080x1080" },
+  { id: "2.39:1", label: "Anamorphic 2.39:1", note: "Hollywood Cinema", res: "2560x1080" },
+  { id: "4:5", label: "Portrait 4:5", note: "Social Portrait Feed", res: "1080x1350" },
 ];
-const FORMATS = [
-  { id: "", label: "Let AI decide (Auto-detect best format & narrative arc)" },
-  { id: "documentaries", label: "Documentary (Hollywood Evidence-Led)" },
-  { id: "educational_videos", label: "Educational / Animated Explainer" },
-  { id: "fiction_short_films", label: "Animated / Fiction Short Film (Pixar 2D/3D)" },
-  { id: "youtube_shorts", label: "YouTube Shorts / Reels / TikTok (High-Retention)" },
-  { id: "youtube_longform", label: "YouTube Long-Form Essay" },
-  { id: "historical_recreations", label: "Historical Recreation & Biography" },
-  { id: "brand_commercials", label: "Brand Commercial / Ad" },
-  { id: "saas_product_demos", label: "SaaS / Tech Product Explainer" },
-  { id: "movie_trailers", label: "Cinematic Trailer / Teaser" },
-  { id: "music_videos", label: "Music Video / Beat-Mapped Visuals" },
+
+const RESOLUTIONS = [
+  { id: "1280x720", label: "720p HD (Draft / Fast)" },
+  { id: "1920x1080", label: "1080p Full HD (Standard)" },
+  { id: "2560x1440", label: "1440p 2K (Crisp)" },
+  { id: "3840x2160", label: "4K UHD (Master)" },
 ];
+
+const FRAME_RATES = [
+  { id: 24, label: "24 fps (Hollywood Cinema)" },
+  { id: 30, label: "30 fps (Web & Social Standard)" },
+  { id: 60, label: "60 fps (Ultra Smooth Motion)" },
+];
+
+const COLOR_GRADES = [
+  { id: "natural", label: "Natural / Neutral" },
+  { id: "teal_orange", label: "Cinematic Teal & Orange" },
+  { id: "film_noir", label: "Moody Film Noir B&W" },
+  { id: "vibrant_anime", label: "Vibrant Anime" },
+  { id: "vintage_warm", label: "Vintage Warm Film" },
+];
+
 const VOICES = [
   { id: "auto", label: "Let AI decide (Dual Human Male + Female Neural Voices)" },
   { id: "dual", label: "Dual Male & Female Conversational Voices" },
   { id: "male", label: "Male Human Voice Only (ChristopherNeural / GuyNeural)" },
   { id: "female", label: "Female Human Voice Only (AriaNeural / JennyNeural)" },
 ];
+
 const ENGINES = [
   { id: "", label: "Let AI decide (Pixar 2D/3D + Remotion Motion Graphics + xfade)" },
+  { id: "blender", label: "3D Rigged Character Animation (Headless Blender)" },
   { id: "hyperframes", label: "Pixar 2D/3D Character & Parallax Animation (HyperFrames)" },
-  { id: "libresprite", label: "Pixel Art Sprite & Tilemap Pipeline (LibreSprite / Canvas)" },
-  { id: "opentoonz", label: "Hand-Drawn Storybook & Watercolor Pipeline (OpenToonz / Canvas)" },
   { id: "remotion", label: "Kinetic Motion Graphics & Data HUD (Remotion)" },
   { id: "threejs", label: "3D WebGL Scenes (Three.js)" },
-  { id: "blender", label: "3D Rigged Character Animation (Blender)" },
+  { id: "libresprite", label: "Pixel Art Sprite & Tilemap Pipeline (LibreSprite / Canvas)" },
+  { id: "opentoonz", label: "Hand-Drawn Storybook & Watercolor Pipeline (OpenToonz / Canvas)" },
   { id: "ffmpeg", label: "Cinematic Slideshow & Footage (FFmpeg)" },
 ];
 
 export function NewProjectView({ onCreate }: Props) {
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [videoFormat, setVideoFormat] = useState("");
+  const [videoType, setVideoType] = useState("");
   const [visualStyle, setVisualStyle] = useState("");
   const [productionMode, setProductionMode] = useState<"free_open_source" | "hybrid" | "professional">("free_open_source");
   const [voiceMode, setVoiceMode] = useState("auto");
   const [shape, setShape] = useState(SHAPES[0]);
+
+  // Duration & Pacing
   const [lengthSec, setLengthSec] = useState("");
+  const [durationInputVal, setDurationInputVal] = useState("");
+  const [durationUnit, setDurationUnit] = useState<"sec" | "min">("sec");
+  const [pacing, setPacing] = useState<"fast" | "balanced" | "cinematic">("balanced");
+
+  // Multi-Skill Orchestration
+  const [selectedSkills, setSelectedSkills] = useState<string[]>(["blender", "remotion"]);
+
+  // Blender 3D Studio Settings
+  const [blenderEngine, setBlenderEngine] = useState<"auto" | "EEVEE" | "CYCLES" | "WORKBENCH">("auto");
+  const [blenderEnv, setBlenderEnv] = useState<"room" | "outdoor" | "cyberpunk" | "isometric" | "minimal">("room");
+  const [blenderLight, setBlenderLight] = useState<"three_point" | "film_noir" | "golden_hour" | "neon" | "softbox">("three_point");
+  const [blenderCamera, setBlenderCamera] = useState<"push_in" | "orbit" | "pan" | "crane" | "static">("push_in");
+  const [blenderAnim, setBlenderAnim] = useState<"walk" | "run" | "idle" | "talk">("walk");
+  const [blenderMeshPath, setBlenderMeshPath] = useState("");
+  const [blenderSamples, setBlenderSamples] = useState(32);
+  const [blenderLipSync, setBlenderLipSync] = useState(true);
+
+  // Advanced Cinematic Output Settings
+  const [resolution, setResolution] = useState(SHAPES[0].res);
+  const [fps, setFps] = useState(30);
+  const [colorGrade, setColorGrade] = useState("natural");
+  const [qualityPreset, setQualityPreset] = useState<"draft" | "high" | "master">("high");
+
   const [more, setMore] = useState(true);
   const [mode, setMode] = useState<"automatic" | "professional">("automatic");
   const [language, setLanguage] = useState("en");
@@ -106,6 +287,48 @@ export function NewProjectView({ onCreate }: Props) {
   const [fileError, setFileError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const refMediaInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Toggle skills in multi-select
+  const toggleSkill = (skillId: string) => {
+    setSelectedSkills((prev) =>
+      prev.includes(skillId) ? prev.filter((s) => s !== skillId) : [...prev, skillId]
+    );
+  };
+
+  // Sync custom duration input
+  const handleDurationChange = (val: string, unit: "sec" | "min") => {
+    setDurationInputVal(val);
+    setDurationUnit(unit);
+    const num = parseFloat(val);
+    if (!isNaN(num) && num > 0) {
+      const calculatedSec = unit === "min" ? Math.round(num * 60) : Math.round(num);
+      setLengthSec(String(calculatedSec));
+    } else if (!val) {
+      setLengthSec("");
+    }
+  };
+
+  // Select quick duration preset
+  const selectLengthPreset = (sec: string) => {
+    setLengthSec(sec);
+    if (!sec) {
+      setDurationInputVal("");
+    } else {
+      const numSec = parseInt(sec, 10);
+      if (numSec >= 60 && numSec % 60 === 0) {
+        setDurationInputVal(String(numSec / 60));
+        setDurationUnit("min");
+      } else {
+        setDurationInputVal(sec);
+        setDurationUnit("sec");
+      }
+    }
+  };
+
+  // Calculate estimated scenes
+  const effectiveSec = lengthSec ? parseFloat(lengthSec) : 60;
+  const currentPacingObj = PACING_OPTIONS.find((p) => p.id === pacing) || PACING_OPTIONS[1];
+  const estimatedScenes = Math.max(1, Math.round(effectiveSec / currentPacingObj.secPerShot));
 
   const addRefLink = () => {
     const trimmed = refUrl.trim();
@@ -138,9 +361,22 @@ export function NewProjectView({ onCreate }: Props) {
         prompt: effectivePrompt,
         production_mode: productionMode,
         preferences: {
-          video_format: videoFormat || undefined,
+          video_format: videoType || undefined,
+          video_type: videoType || undefined,
           visual_style: visualStyle || undefined,
           target_duration_sec: lengthSec ? Number(lengthSec) : undefined,
+          skills: selectedSkills,
+          blender_settings: {
+            engine: blenderEngine,
+            environment: blenderEnv,
+            lighting: blenderLight,
+            camera_motion: blenderCamera,
+            animation: blenderAnim,
+            samples: blenderSamples,
+            lip_sync: blenderLipSync,
+          },
+          pacing,
+          color_grade: colorGrade,
         },
         references: allRefs,
         uploads: refFiles.map((f) => ({ filename: f.file.name, roles: [f.role], user_notes: f.userNotes })),
@@ -163,7 +399,7 @@ export function NewProjectView({ onCreate }: Props) {
         setTitle(res.parsed_title);
       }
       if (res.parsed_duration_sec && !lengthSec) {
-        setLengthSec(String(Math.round(res.parsed_duration_sec)));
+        selectLengthPreset(String(Math.round(res.parsed_duration_sec)));
       }
       if (res.extracted_text) {
         setUploadedScript(res.extracted_text);
@@ -176,7 +412,6 @@ export function NewProjectView({ onCreate }: Props) {
         }
       }
     } catch (err) {
-      // Fallback: read directly in browser as UTF-8 text if possible
       try {
         const rawText = await file.text();
         setUploadedScript(rawText);
@@ -206,39 +441,63 @@ export function NewProjectView({ onCreate }: Props) {
         ...refLinks.map((r) => ({ url: r.url, roles: [r.role], user_notes: r.user_notes })),
         ...(refUrl.trim() ? [{ url: refUrl.trim(), roles: [refRole], user_notes: refNotes.trim() }] : []),
       ];
-      await onCreate({
-        title: title.trim() || null,
-        prompt: effectivePrompt,
-        mode,
-        production_mode: productionMode,
-        video_format: videoFormat || null,
-        visual_style: visualStyle || null,
-        voice_mode: voiceMode || "auto",
-        aspect_ratio: shape.id,
-        resolution: shape.res,
-        target_duration_sec: lengthSec ? Number(lengthSec) : null,
-        language,
-        subtitle_languages: subLangs.split(",").map((s) => s.trim()).filter(Boolean),
-        uploaded_script: uploadedScript.trim() || null,
-        reference_video_url: refUrl.trim() || null,
-        references: allRefs,
-        preferred_render_engine: engine || null,
-      }, runNow, refFiles);
+
+      await onCreate(
+        {
+          title: title.trim() || null,
+          prompt: effectivePrompt,
+          mode,
+          production_mode: productionMode,
+          video_format: videoType || null,
+          video_type: videoType || null,
+          visual_style: visualStyle || null,
+          voice_mode: voiceMode || "auto",
+          aspect_ratio: shape.id,
+          resolution: resolution || shape.res,
+          fps,
+          target_duration_sec: lengthSec ? Number(lengthSec) : null,
+          language,
+          subtitle_languages: subLangs.split(",").map((s) => s.trim()).filter(Boolean),
+          uploaded_script: uploadedScript.trim() || null,
+          reference_video_url: refUrl.trim() || null,
+          references: allRefs,
+          preferred_render_engine: engine || (selectedSkills.includes("blender") ? "blender" : null),
+          skills: selectedSkills,
+          blender_settings: {
+            engine: blenderEngine,
+            environment: blenderEnv,
+            lighting: blenderLight,
+            camera_motion: blenderCamera,
+            animation: blenderAnim,
+            character_mesh_path: blenderMeshPath.trim() || undefined,
+            samples: blenderSamples,
+            lip_sync: blenderLipSync,
+          },
+          pacing,
+          color_grade: colorGrade,
+          quality_preset: qualityPreset,
+        },
+        runNow,
+        refFiles
+      );
     } finally {
       setLoading(null);
     }
   };
 
+  const isBlenderActive = selectedSkills.includes("blender") || engine === "blender" || visualStyle === "3d_stylized";
+
   return (
-    <div className="max-w-3xl space-y-7">
+    <div className="max-w-4xl space-y-7">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">New video</h1>
+        <h1 className="text-2xl font-bold tracking-tight">New video production</h1>
         <p className="text-slate mt-1">
-          Describe your idea, paste a screenplay, or upload any file (.pdf, .docx, .md, .txt, .srt, .json, .csv, audio/video). Choose exact settings or let the AI Director decide and stream its reasoning live.
+          Configure advanced Blender 3D, multi-skill orchestration, duration, pacing, and visual delivery settings — or let the AI Director orchestrate automatically.
         </p>
       </div>
 
       <div className="card p-6 space-y-6">
+        {/* Title and Upload Header */}
         <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
           <div>
             <label htmlFor="title" className="label">Project title (optional — auto-extracted if left blank)</label>
@@ -247,7 +506,7 @@ export function NewProjectView({ onCreate }: Props) {
               className="field"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Napoleon Bonaparte — Rise and Legacy"
+              placeholder="e.g. Cyberpunk Odyssey: The Quantum Frontier"
             />
           </div>
           <div>
@@ -267,7 +526,7 @@ export function NewProjectView({ onCreate }: Props) {
               onClick={() => fileInputRef.current?.click()}
               className="btn btn-quiet w-full"
             >
-              <Upload className="w-4 h-4" /> {fileBusy ? "Reading file…" : "Upload any file (Script / PDF / DOCX / SRT / Media)"}
+              <Upload className="w-4 h-4" /> {fileBusy ? "Reading file…" : "Upload Script / File (.pdf, .docx, .md, .srt)"}
             </button>
           </div>
         </div>
@@ -295,17 +554,188 @@ export function NewProjectView({ onCreate }: Props) {
           </div>
         )}
 
+        {/* Prompt / Screenplay */}
         <div>
-          <label htmlFor="prompt" className="label">What should the video be about? (Or paste your full screenplay here)</label>
-          <textarea id="prompt" rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} className="field text-[15px]"
-            placeholder="A documentary on Napoleon Bonaparte with dual human male & female narration, Pixar-style 2D/3D animated scenes, motion graphics, and smooth xfade transitions..." />
+          <label htmlFor="prompt" className="label">What should the video be about? (Or paste screenplay / scene outline)</label>
+          <textarea
+            id="prompt"
+            rows={4}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            className="field text-[15px]"
+            placeholder="A sci-fi action sequence with a rigged 3D hero walking through a neon cyberpunk corridor, dynamic camera tracking, dual neural voice narration, and Remotion motion graphics HUD..."
+          />
         </div>
 
+        {/* Multi-Skill Orchestration Matrix */}
+        <fieldset className="space-y-2">
+          <div className="flex items-center justify-between">
+            <legend className="label flex items-center gap-2">
+              <Layers className="w-4 h-4 text-ink" /> AI Production Skills & Engines (Multi-Select: choose one or more)
+            </legend>
+            <div className="text-xs text-slate font-medium">
+              <span className="chip text-[11px] font-mono mr-1.5">{selectedSkills.length} selected</span>
+              <button
+                type="button"
+                onClick={() => setSelectedSkills(selectedSkills.length === SKILLS_LIST.length ? ["blender"] : SKILLS_LIST.map((s) => s.id))}
+                className="text-xs text-accent hover:underline"
+              >
+                {selectedSkills.length === SKILLS_LIST.length ? "Deselect All" : "Select All"}
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+            {SKILLS_LIST.map((skill) => {
+              const active = selectedSkills.includes(skill.id);
+              return (
+                <button
+                  key={skill.id}
+                  type="button"
+                  onClick={() => toggleSkill(skill.id)}
+                  aria-pressed={active}
+                  className={`text-left rounded-lg border p-3 transition-all relative ${
+                    active ? "border-ink bg-ink text-white shadow-sm" : "border-rule bg-panel hover:border-ink/50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-[13px] flex items-center gap-1.5">
+                      {skill.name}
+                    </span>
+                    <span
+                      className={`w-4 h-4 rounded flex items-center justify-center border text-[10px] ${
+                        active ? "border-white bg-white text-ink font-bold" : "border-rule text-transparent"
+                      }`}
+                    >
+                      ✓
+                    </span>
+                  </div>
+                  <div className={`text-xs mt-1 leading-snug line-clamp-2 ${active ? "text-[#c2cbd4]" : "text-mute"}`}>
+                    {skill.tagline}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        {/* Dedicated Headless Blender 3D Studio Settings */}
+        {isBlenderActive && (
+          <div className="rounded-xl border border-accent/40 bg-sunken/60 p-4 space-y-4">
+            <div className="flex items-center justify-between border-b border-rule pb-2.5">
+              <div className="flex items-center gap-2">
+                <Box className="w-5 h-5 text-accent" />
+                <span className="font-bold text-[14px]">Headless Blender 3D Studio Configuration</span>
+              </div>
+              <span className="chip text-[11px] bg-accent/15 text-accent font-semibold">Active Engine</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 text-[13px]">
+              <div>
+                <label className="label">Render Engine</label>
+                <select
+                  className="field py-1.5 text-xs"
+                  value={blenderEngine}
+                  onChange={(e) => setBlenderEngine(e.target.value as "auto" | "EEVEE" | "CYCLES" | "WORKBENCH")}
+                >
+                  {BLENDER_ENGINES.map((be) => <option key={be.id} value={be.id}>{be.label}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="label">3D Environment Set</label>
+                <select
+                  className="field py-1.5 text-xs"
+                  value={blenderEnv}
+                  onChange={(e) => setBlenderEnv(e.target.value as "room" | "outdoor" | "cyberpunk" | "isometric" | "minimal")}
+                >
+                  {BLENDER_ENVIRONMENTS.map((env) => <option key={env.id} value={env.id}>{env.label}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="label">Lighting Preset</label>
+                <select
+                  className="field py-1.5 text-xs"
+                  value={blenderLight}
+                  onChange={(e) => setBlenderLight(e.target.value as "three_point" | "film_noir" | "golden_hour" | "neon" | "softbox")}
+                >
+                  {BLENDER_LIGHTING.map((bl) => <option key={bl.id} value={bl.id}>{bl.label}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="label">Camera Choreography</label>
+                <select
+                  className="field py-1.5 text-xs"
+                  value={blenderCamera}
+                  onChange={(e) => setBlenderCamera(e.target.value as "push_in" | "orbit" | "pan" | "crane" | "static")}
+                >
+                  {BLENDER_CAMERAS.map((cam) => <option key={cam.id} value={cam.id}>{cam.label}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="label">Character Action</label>
+                <select
+                  className="field py-1.5 text-xs"
+                  value={blenderAnim}
+                  onChange={(e) => setBlenderAnim(e.target.value as "walk" | "run" | "idle" | "talk")}
+                >
+                  {BLENDER_ANIMATIONS.map((an) => <option key={an.id} value={an.id}>{an.label}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="label">Render Samples ({blenderSamples} samples)</label>
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="range"
+                    min={8}
+                    max={128}
+                    step={8}
+                    value={blenderSamples}
+                    onChange={(e) => setBlenderSamples(Number(e.target.value))}
+                    className="w-full accent-ink"
+                  />
+                  <span className="font-mono text-xs w-8 text-right">{blenderSamples}</span>
+                </div>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="label">Custom 3D Mesh / Rig Path (Optional .glb / .fbx / .blend)</label>
+                <input
+                  type="text"
+                  className="field py-1.5 text-xs font-mono"
+                  placeholder="e.g. media_library/characters/soldier_rigged.glb or absolute path"
+                  value={blenderMeshPath}
+                  onChange={(e) => setBlenderMeshPath(e.target.value)}
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-4">
+                <input
+                  id="lipsync"
+                  type="checkbox"
+                  checked={blenderLipSync}
+                  onChange={(e) => setBlenderLipSync(e.target.checked)}
+                  className="w-4 h-4 accent-ink rounded cursor-pointer"
+                />
+                <label htmlFor="lipsync" className="text-xs font-medium cursor-pointer">
+                  Facial Shape-Key Lip-Sync (Viseme audio sync)
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Video Type / Category Selector */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label htmlFor="format" className="label">Video format</label>
-            <select id="format" className="field" value={videoFormat} onChange={(e) => setVideoFormat(e.target.value)}>
-              {FORMATS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+            <label htmlFor="videoType" className="label flex items-center gap-1.5">
+              <Film className="w-3.5 h-3.5 text-ink" /> Type of Video
+            </label>
+            <select id="videoType" className="field" value={videoType} onChange={(e) => setVideoType(e.target.value)}>
+              {VIDEO_TYPES.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
             </select>
           </div>
           <div>
@@ -316,8 +746,9 @@ export function NewProjectView({ onCreate }: Props) {
           </div>
         </div>
 
+        {/* Visual Style */}
         <fieldset>
-          <legend className="label">Visual style & animation profile</legend>
+          <legend className="label">Visual style & aesthetic direction</legend>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
             {VISUAL_STYLES.map((st) => (
               <button
@@ -334,69 +765,115 @@ export function NewProjectView({ onCreate }: Props) {
           </div>
         </fieldset>
 
+        {/* Duration, Pacing & Time Inputs */}
+        <fieldset className="space-y-3">
+          <div className="flex items-center justify-between">
+            <legend className="label flex items-center gap-1.5">
+              <Clock className="w-4 h-4 text-ink" /> Target Duration & Shot Pacing
+            </legend>
+            <span className="text-xs text-slate font-medium">
+              Live estimate: <strong className="text-ink">~{estimatedScenes} scenes</strong> ({effectiveSec}s total @ {currentPacingObj.secPerShot}s/shot)
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {LENGTH_PRESETS.map((l) => (
+              <button
+                key={l.label}
+                type="button"
+                onClick={() => selectLengthPreset(l.sec)}
+                aria-pressed={lengthSec === l.sec}
+                className={`btn text-xs py-1.5 px-3 ${lengthSec === l.sec ? "btn-primary" : "btn-quiet"}`}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={5}
+                max={14400}
+                step={durationUnit === "min" ? "0.1" : "1"}
+                value={durationInputVal || (lengthSec ? (durationUnit === "min" ? (Number(lengthSec) / 60).toFixed(1) : lengthSec) : "")}
+                onChange={(e) => handleDurationChange(e.target.value, durationUnit)}
+                placeholder={durationUnit === "min" ? "Duration (e.g. 2.5)" : "Duration in sec (e.g. 90)"}
+                className="field text-[13px]"
+              />
+              <div className="flex rounded-md border border-rule overflow-hidden shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleDurationChange(durationInputVal || lengthSec, "sec")}
+                  className={`px-3 py-1.5 text-xs font-semibold ${durationUnit === "sec" ? "bg-ink text-white" : "bg-panel text-slate hover:text-ink"}`}
+                >
+                  Sec
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const secVal = lengthSec ? Number(lengthSec) : (parseFloat(durationInputVal) || 60);
+                    handleDurationChange((secVal / 60).toFixed(1), "min");
+                  }}
+                  className={`px-3 py-1.5 text-xs font-semibold ${durationUnit === "min" ? "bg-ink text-white" : "bg-panel text-slate hover:text-ink"}`}
+                >
+                  Min
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <select
+                className="field text-[13px]"
+                value={pacing}
+                onChange={(e) => setPacing(e.target.value as "fast" | "balanced" | "cinematic")}
+              >
+                {PACING_OPTIONS.map((po) => <option key={po.id} value={po.id}>{po.label}</option>)}
+              </select>
+            </div>
+          </div>
+        </fieldset>
+
+        {/* Aspect Ratio Shape */}
         <fieldset>
-          <legend className="label">Production mode & cost policy</legend>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            <button
-              type="button"
-              onClick={() => setProductionMode("free_open_source")}
-              aria-pressed={productionMode === "free_open_source"}
-              className={`text-left rounded-lg border px-3 py-2.5 ${productionMode === "free_open_source" ? "border-ink bg-ink text-white" : "border-rule bg-panel hover:border-ink"}`}
-            >
-              <div className="font-semibold text-[13px] flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5" /> Free & Open-Source
-              </div>
-              <div className={`text-xs mt-0.5 ${productionMode === "free_open_source" ? "text-[#b9c2cb]" : "text-mute"}`}>
-                100% local & free engines (Blender, LibreSprite, OpenToonz, HyperFrames, Remotion, Edge-TTS, FFmpeg). Blocks all paid APIs.
-              </div>
-            </button>
-            <button
-              type="button"
-              onClick={() => setProductionMode("hybrid")}
-              aria-pressed={productionMode === "hybrid"}
-              className={`text-left rounded-lg border px-3 py-2.5 ${productionMode === "hybrid" ? "border-ink bg-ink text-white" : "border-rule bg-panel hover:border-ink"}`}
-            >
-              <div className="font-semibold text-[13px]">Hybrid / Automatic</div>
-              <div className={`text-xs mt-0.5 ${productionMode === "hybrid" ? "text-[#b9c2cb]" : "text-mute"}`}>
-                Combines local open-source engines with configured cloud providers when helpful.
-              </div>
-            </button>
-            <button
-              type="button"
-              onClick={() => { setProductionMode("professional"); setMode("professional"); }}
-              aria-pressed={productionMode === "professional"}
-              className={`text-left rounded-lg border px-3 py-2.5 ${productionMode === "professional" ? "border-ink bg-ink text-white" : "border-rule bg-panel hover:border-ink"}`}
-            >
-              <div className="font-semibold text-[13px]">Professional Studio</div>
-              <div className={`text-xs mt-0.5 ${productionMode === "professional" ? "text-[#b9c2cb]" : "text-mute"}`}>
-                Full manual approval gates, multi-engine routing, and frame-accurate control.
-              </div>
-            </button>
+          <legend className="label">Aspect Ratio & Framing</legend>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
+            {SHAPES.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => {
+                  setShape(s);
+                  setResolution(s.res);
+                }}
+                aria-pressed={shape.id === s.id}
+                className={`text-left rounded-lg border px-3 py-2 ${shape.id === s.id ? "border-ink bg-ink text-white" : "border-rule bg-panel hover:border-ink"}`}
+              >
+                <div className="font-semibold text-[12px]">{s.label}</div>
+                <div className={`text-[11px] truncate ${shape.id === s.id ? "text-[#b9c2cb]" : "text-mute"}`}>{s.note}</div>
+              </button>
+            ))}
           </div>
         </fieldset>
 
         {/* Reference Links & Uploaded Reference Media */}
         <div className="rounded-lg border border-rule p-4 space-y-3 bg-sunken/50">
           <div className="flex items-center justify-between">
-            <div>
-              <div className="font-semibold text-[13.5px] flex items-center gap-1.5">
-                <Link2 className="w-4 h-4" /> Reference Links & Media Attachments
-              </div>
-              <p className="hint">Attach YouTube videos/channels, Instagram public posts/Reels/profiles, websites, or upload images, videos, audio, and PDFs with explicit roles.</p>
-            </div>
+            <span className="label mb-0">Visual & Character References (URLs, Images, Clips)</span>
+            <span className="text-xs text-mute font-mono">{refLinks.length + refFiles.length} attached</span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_1fr_auto] gap-2 items-center">
+          <div className="grid grid-cols-1 md:grid-cols-[160px_1fr_1fr_auto] gap-2 items-center">
+            <select className="field text-[13px]" value={refRole} onChange={(e) => setRefRole(e.target.value)}>
+              {REFERENCE_ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+            </select>
             <input
               className="field text-[13px]"
               value={refUrl}
               onChange={(e) => setRefUrl(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addRefLink())}
-              placeholder="Paste YouTube, Instagram, or Web URL…"
+              placeholder="https://youtube.com/watch?v=… or https://instagram.com/…"
             />
-            <select className="field text-[13px]" value={refRole} onChange={(e) => setRefRole(e.target.value)}>
-              {REFERENCE_ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
-            </select>
             <input
               className="field text-[13px]"
               value={refNotes}
@@ -425,7 +902,7 @@ export function NewProjectView({ onCreate }: Props) {
             </ul>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-[180px_1fr_auto] gap-2 items-center pt-2 border-t border-rule">
+          <div className="grid grid-cols-1 md:grid-cols-[160px_1fr_auto] gap-2 items-center pt-2 border-t border-rule">
             <select className="field text-[13px]" value={refFileRole} onChange={(e) => setRefFileRole(e.target.value)}>
               {REFERENCE_ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
             </select>
@@ -469,44 +946,13 @@ export function NewProjectView({ onCreate }: Props) {
           )}
         </div>
 
-        <fieldset>
-          <legend className="label">Length</legend>
-          <div className="flex flex-wrap items-center gap-2">
-            {LENGTHS.map((l) => (
-              <button key={l.label} type="button" onClick={() => setLengthSec(l.sec)} aria-pressed={lengthSec === l.sec}
-                className={`btn ${lengthSec === l.sec ? "btn-primary" : "btn-quiet"}`}>{l.label}</button>
-            ))}
-            <input
-              type="number"
-              min={5}
-              max={14400}
-              value={lengthSec}
-              onChange={(e) => setLengthSec(e.target.value)}
-              placeholder="Custom sec (e.g. 45)"
-              className="field w-44 py-1.5 text-[13px]"
-            />
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend className="label">Shape</legend>
-          <div className="grid grid-cols-3 gap-2">
-            {SHAPES.map((s) => (
-              <button key={s.id} type="button" onClick={() => setShape(s)} aria-pressed={shape.id === s.id}
-                className={`text-left rounded-lg border px-3 py-2.5 ${shape.id === s.id ? "border-ink bg-ink text-white" : "border-rule bg-panel hover:border-ink"}`}>
-                <div className="font-semibold text-[13px]">{s.label}</div>
-                <div className={`text-xs ${shape.id === s.id ? "text-[#b9c2cb]" : "text-mute"}`}>{s.note}</div>
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
+        {/* Collapsible Advanced Master Settings */}
         <div>
           <button type="button" onClick={() => setMore((v) => !v)} className="btn btn-ghost -ml-2" aria-expanded={more}>
-            {more ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} Animation engine, script & language options
+            {more ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} Advanced Video Delivery, Color Grade & Engine Options
           </button>
           {more && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 pt-3 border-t border-rule">
               <div>
                 <label htmlFor="mode" className="label">Who drives?</label>
                 <select id="mode" className="field" value={mode} onChange={(e) => setMode(e.target.value as "automatic" | "professional")}>
@@ -514,28 +960,64 @@ export function NewProjectView({ onCreate }: Props) {
                   <option value="professional">I want manual control at each step</option>
                 </select>
               </div>
+
               <div>
-                <label htmlFor="engine" className="label">Animation & visual engine</label>
+                <label htmlFor="engine" className="label">Primary render engine override</label>
                 <select id="engine" className="field" value={engine} onChange={(e) => setEngine(e.target.value)}>
                   {ENGINES.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
                 </select>
               </div>
+
+              <div>
+                <label htmlFor="res" className="label">Master Resolution</label>
+                <select id="res" className="field" value={resolution} onChange={(e) => setResolution(e.target.value)}>
+                  {RESOLUTIONS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="fps" className="label">Target Frame Rate</label>
+                <select id="fps" className="field" value={fps} onChange={(e) => setFps(Number(e.target.value))}>
+                  {FRAME_RATES.map((fr) => <option key={fr.id} value={fr.id}>{fr.label}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="colorGrade" className="label">Color Grade / LUT Preset</label>
+                <select id="colorGrade" className="field" value={colorGrade} onChange={(e) => setColorGrade(e.target.value)}>
+                  {COLOR_GRADES.map((cg) => <option key={cg.id} value={cg.id}>{cg.label}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="qualityPreset" className="label">Export Quality Profile</label>
+                <select id="qualityPreset" className="field" value={qualityPreset} onChange={(e) => setQualityPreset(e.target.value as "draft" | "high" | "master")}>
+                  <option value="draft">Draft (Fast render, lower bitrate)</option>
+                  <option value="high">High Quality (Production 10 Mbps H.264)</option>
+                  <option value="master">Master ProRes / Max Bitrate</option>
+                </select>
+              </div>
+
               <div>
                 <label htmlFor="lang" className="label">Narration language</label>
                 <input id="lang" className="field" value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="en" />
               </div>
+
               <div>
                 <label htmlFor="subs" className="label">Subtitle languages</label>
                 <input id="subs" className="field" value={subLangs} onChange={(e) => setSubLangs(e.target.value)} placeholder="en, hi" />
-                <div className="hint mt-1">Separate with commas.</div>
               </div>
-              <div className="md:col-span-2">
-                <label htmlFor="ref" className="label">Reference video link</label>
-                <input id="ref" className="field" value={refUrl} onChange={(e) => setRefUrl(e.target.value)} placeholder="https://… (optional, for style)" />
-              </div>
-              <div className="md:col-span-2">
-                <label htmlFor="script" className="label">Uploaded or pasted script / file content</label>
-                <textarea id="script" rows={5} className="field font-mono text-[12.5px]" value={uploadedScript} onChange={(e) => setUploadedScript(e.target.value)} placeholder="Paste a structured # SCREENPLAY: ... or upload any file above (.pdf, .docx, .md, .txt, .srt, .json, .csv). Leave empty to have the Hollywood Screenplay Architect write one." />
+
+              <div className="md:col-span-3">
+                <label htmlFor="script" className="label">Uploaded or pasted script / screenplay content</label>
+                <textarea
+                  id="script"
+                  rows={4}
+                  className="field font-mono text-[12.5px]"
+                  value={uploadedScript}
+                  onChange={(e) => setUploadedScript(e.target.value)}
+                  placeholder="Paste a structured # SCREENPLAY: ... or leave blank for Hollywood Screenplay Architect."
+                />
               </div>
             </div>
           )}
@@ -544,7 +1026,7 @@ export function NewProjectView({ onCreate }: Props) {
         <div className="rounded-lg bg-sunken px-3.5 py-2.5 text-[12.5px] text-slate flex items-start gap-2">
           <Sparkles className="w-4 h-4 text-ink shrink-0 mt-0.5" />
           <span>
-            Any setting left on <strong>Let AI decide</strong> is automatically selected by the AI Director based on your topic and trending formats, with full decision reasoning streamed in the <strong>Produce</strong> live log.
+            Selected skills (<strong>{selectedSkills.join(", ")}</strong>) and Blender configurations will be synthesized by the AI Director with live streaming reasoning logs in the Backlot view.
           </span>
         </div>
 
@@ -572,23 +1054,30 @@ export function NewProjectView({ onCreate }: Props) {
                 <div className="font-semibold">{String((briefPreview.production_summary as Record<string, unknown>)?.reference_material || "0")}</div>
               </div>
             </div>
-            {Array.isArray(briefPreview.questions) && briefPreview.questions.length > 0 && (
-              <div className="text-xs text-slate pt-1">
-                <span className="font-semibold text-ink">Suggested clarifications: </span>
-                {(briefPreview.questions as Array<Record<string, unknown>>).map((q) => String(q.question)).join(" • ")}
-              </div>
-            )}
           </div>
         )}
 
         <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-rule">
-          <button disabled={loading !== null || (!prompt.trim() && !uploadedScript.trim())} onClick={() => submit(false)} className="btn btn-primary mt-5">
+          <button
+            disabled={loading !== null || (!prompt.trim() && !uploadedScript.trim())}
+            onClick={() => submit(false)}
+            className="btn btn-primary mt-5"
+          >
             <FileText className="w-4 h-4" /> {loading === "plan" ? "Researching & writing script…" : "Write the script first"}
           </button>
-          <button disabled={loading !== null || (!prompt.trim() && !uploadedScript.trim())} onClick={() => submit(true)} className="btn btn-quiet mt-5">
+          <button
+            disabled={loading !== null || (!prompt.trim() && !uploadedScript.trim())}
+            onClick={() => submit(true)}
+            className="btn btn-quiet mt-5"
+          >
             <Play className="w-4 h-4" /> {loading === "run" ? "Starting…" : "Skip review and make the video"}
           </button>
-          <button type="button" disabled={loading !== null || (!prompt.trim() && !uploadedScript.trim())} onClick={handleInterpret} className="btn btn-ghost mt-5">
+          <button
+            type="button"
+            disabled={loading !== null || (!prompt.trim() && !uploadedScript.trim())}
+            onClick={handleInterpret}
+            className="btn btn-ghost mt-5"
+          >
             <Sparkles className="w-4 h-4" /> {loading === "interpret" ? "Analyzing brief…" : "Preview AI interpretation"}
           </button>
         </div>

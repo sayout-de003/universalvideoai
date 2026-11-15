@@ -110,6 +110,7 @@ class ProjectCreateRequest(BaseModel):
     mode: ProductionMode = ProductionMode.AUTOMATIC
     production_mode: str | None = None
     video_format: str | None = None
+    video_type: str | None = None
     visual_style: str | None = None
     voice_mode: str | None = "auto"
     target_duration_sec: float | None = Field(default=None, gt=0)
@@ -119,6 +120,11 @@ class ProjectCreateRequest(BaseModel):
     language: str = "en"
     subtitle_languages: list[str] = Field(default_factory=lambda: ["en"])
     preferred_render_engine: str | None = None
+    skills: list[str] = Field(default_factory=list)
+    blender_settings: dict[str, Any] = Field(default_factory=dict)
+    pacing: str | None = "balanced"
+    color_grade: str | None = "natural"
+    quality_preset: str | None = "high"
     uploaded_script: str | None = None
     reference_video_url: str | None = None
     references: list[dict[str, Any]] = Field(default_factory=list)

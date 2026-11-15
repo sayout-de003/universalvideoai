@@ -51,11 +51,13 @@ def _extract_subject(prompt: str) -> str:
     from backend.services.document_parser import clean_markdown_inline, parse_structured_screenplay
 
     parsed = parse_structured_screenplay(prompt)
-    if parsed.get("subject"):
-        return str(parsed["subject"])[:80]
+    if parsed.get("subject") and not str(parsed["subject"]).lower().startswith("untitled"):
+        sub = clean_markdown_inline(str(parsed["subject"]))
+        if sub and len(sub) >= 2:
+            return sub[:80]
 
     first_line = prompt.strip().splitlines()[0] if prompt.strip() else ""
-    s = re.sub(r"^[#*\s]+", "", first_line)
+    s = clean_markdown_inline(first_line)
     s = re.sub(r"\*Format:.*$", "", s, flags=re.IGNORECASE).strip()
     s = re.sub(
         r"^.*?\b(?:short\s+film|feature\s+film|documentary|video|film|reel|short|commercial|ad|explainer|trailer|course|story|screenplay)\s*(?::|about|on|for|of)\s*",
@@ -76,13 +78,17 @@ def _extract_subject(prompt: str) -> str:
         s,
         flags=re.IGNORECASE,
     )
+    s = re.sub(r"^(?:SCREENPLAY\s*:|TITLE\s*:|SCENE\s*\d*\s*[:\-]?)\s*", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\s+", " ", s).strip().rstrip(".!?*#")
-    return (s if len(s) >= 3 else first_line.strip().rstrip(".!?"))[:90]
+    cleaned_first = clean_markdown_inline(first_line).strip().rstrip(".!?")
+    return clean_markdown_inline(s if len(s) >= 3 else cleaned_first)[:90] or "Cinematic Production"
 
 
 def _short_subject(subject: str, max_words: int = 4) -> str:
-    words = [w for w in subject.split() if w.lower() not in ("a", "an", "the")]
-    return " ".join(words[:max_words]) or subject[:32]
+    from backend.services.document_parser import clean_markdown_inline
+    clean = clean_markdown_inline(subject)
+    words = [w for w in clean.split() if w.lower() not in ("a", "an", "the", "#", "*")]
+    return " ".join(words[:max_words]) or clean[:32] or "the story"
 
 
 def _trim_to_word_budget(text: str, max_words: int) -> str:
