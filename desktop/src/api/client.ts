@@ -2,9 +2,7 @@ import type { HealthResponse, ProjectDetail, ProjectSummary } from "../types/stu
 
 export const API_BASE =
   import.meta.env.VITE_API_BASE ||
-  (typeof window !== "undefined" &&
-  window.location.protocol.startsWith("http") &&
-  window.location.port !== "5173"
+  (typeof window !== "undefined" && window.location.protocol.startsWith("http")
     ? ""
     : "http://127.0.0.1:8420");
 
