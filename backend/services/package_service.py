@@ -163,7 +163,26 @@ def build_full_production_package(
         ],
         "shot_list.json": shots,
         "cinematography_plan.json": {"aspect_ratio": project["aspect_ratio"], "resolution": project["resolution"], "fps": project["fps"], "shots": [{"shot_id": sh["id"], "framing": sh["shot_type"], "movement": sh["camera_movement"], "lighting": sh["lighting"]} for sh in shots]},
-        "continuity_bible.json": {"characters": characters, "locations": locations, "props": props},
+        "continuity_bible.json": {
+            "project_id": project_id,
+            "visual_style": project.get("visual_style") or brief.get("confirmed_fields", {}).get("visual_style") or "2d_illustrated",
+            "color_palette": ref_pkg.get("dominant_palette") or ["#1e293b", "#f59e0b", "#38bdf8", "#f8fafc"],
+            "lighting": ref_pkg.get("lighting_profiles") or ["natural_cinematic_key", "warm_rim_highlight"],
+            "camera_language": ref_pkg.get("camera_language") or ["slow_push_in", "multiplane_pan", "rule_of_thirds"],
+            "characters": characters,
+            "locations": locations,
+            "props": props,
+            "world_rules": [
+                f"Maintain consistent visual style ({project.get('visual_style') or '2d_illustrated'}) across all scenes unless overridden.",
+                "Distinguish verified historical/factual claims from illustrative reconstructions.",
+            ],
+            "animation_principles": ["anticipation_and_follow_through", "layered_parallax_depth", "consistent_character_proportions"],
+            "voice_characteristics": {"language": project["language"], "wpm": fmt_spec["wpm"]},
+            "continuity_constraints": [
+                "Locked character silhouette, facial features, and wardrobe across scenes.",
+                "Preserve approved scene renders when regenerating individual scenes.",
+            ],
+        },
         "audio_design_plan.json": {"language": project["language"], "wpm": fmt_spec["wpm"], "music_mood": fmt_spec["category"], "cues": [{"scene_id": s["id"], "narration": s["narration_segment"]} for s in scenes]},
         "asset_requirements.json": {"scenes_to_render": len(scenes), "shots_to_render": len(shots), "render_engine": project["render_engine"]},
         "production_schedule.json": {"stages": ["intake", "research_and_references", "screenplay_and_qa", "storyboard_and_bibles", "approval_gate", "generation", "editing_audio", "final_qa_delivery"], "total_scenes": len(scenes)},
@@ -176,6 +195,7 @@ def build_full_production_package(
     for name in REQUIRED_28_ARTIFACTS:
         res = save_artifact_version(project_id, ws, name, artifacts_map[name], author="studio_orchestrator", status="ready_for_review")
         versions[name] = res
+    (pkg_dir / "production_bible.json").write_text(json.dumps(artifacts_map["continuity_bible.json"], indent=2), encoding="utf-8")
     return versions
 
 

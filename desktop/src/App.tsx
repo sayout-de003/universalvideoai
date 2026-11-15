@@ -5,7 +5,7 @@ import { BacklotMonitorView } from "./components/BacklotMonitorView";
 import { DashboardView } from "./components/DashboardView";
 import { DirectorChatView } from "./components/DirectorChatView";
 import { ExportCenterView } from "./components/ExportCenterView";
-import { NewProjectView } from "./components/NewProjectView";
+import { NewProjectView, type PendingRefUpload } from "./components/NewProjectView";
 import { ProjectHeader } from "./components/ProjectHeader";
 import { ScriptRoomView } from "./components/ScriptRoomView";
 import { Sidebar } from "./components/Sidebar";
@@ -88,9 +88,16 @@ export function App() {
     setTab(isIdle(detail.project.status) ? "script_room" : "backlot");
   };
 
-  const handleCreateProject = async (payload: Record<string, unknown>, runImmediately: boolean) => {
-    const created = await studioClient.createProject(payload);
+  const handleCreateProject = async (payload: Record<string, unknown>, runImmediately: boolean, refFiles?: PendingRefUpload[]) => {
+    let created = await studioClient.createProject(payload);
     setLiveEvents([]);
+    if (refFiles && refFiles.length > 0) {
+      for (const rf of refFiles) {
+        await studioClient.uploadReferenceFile(created.project.id, rf.file, rf.role, rf.userNotes);
+      }
+      await studioClient.analyzeReferences(created.project.id);
+      created = await studioClient.getProject(created.project.id);
+    }
     setActiveProject(created);
     await refreshGlobals();
     if (runImmediately) {
@@ -140,13 +147,13 @@ export function App() {
               onError={(text) => setBanner({ kind: "error", text })}
             />
           )}
-          {view === "new_project" && <NewProjectView onCreate={(p, run) => handleCreateProject(p, run).catch((err) => { setBanner({ kind: "error", text: err instanceof Error ? err.message : String(err) }); })} />}
+          {view === "new_project" && <NewProjectView onCreate={(p, run, refFiles) => handleCreateProject(p, run, refFiles).catch((err) => { setBanner({ kind: "error", text: err instanceof Error ? err.message : String(err) }); })} />}
           {inProject && activeProject && (
             <>
               <ProjectHeader project={activeProject} tab={tab} onSelectTab={setTab} onBack={() => setTab("dashboard")} />
               {tab === "director" && <DirectorChatView project={activeProject} onSendMessage={async (msg, confirmed) => { const r = await studioClient.chatDirector(pid, msg, "text", confirmed); await refresh(); return r; }} />}
               {tab === "script_room" && <ScriptRoomView project={activeProject} onRefresh={refresh} onStartProduction={() => act(async () => { await studioClient.runProject(pid, false); await refresh(); setTab("backlot"); })} />}
-              {tab === "storyboard" && <StoryboardView project={activeProject} onRegenerateScene={(sceneId) => act(async () => { await studioClient.regenerateScene(pid, { scene_id: sceneId }); await refresh(); }, "Scene regenerated. Your manual timeline edits were kept.")} />}
+              {tab === "storyboard" && <StoryboardView project={activeProject} onRefresh={refresh} onRegenerateScene={(sceneId, visualStyle) => act(async () => { await studioClient.regenerateScene(pid, { scene_id: sceneId, ...(visualStyle ? { visual_style: visualStyle } : {}) }); await refresh(); }, "Scene regenerated. Your manual timeline edits were kept.")} />}
               {tab === "backlot" && (
                 <BacklotMonitorView
                   project={activeProject} liveEvents={liveEvents}

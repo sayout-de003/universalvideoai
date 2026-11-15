@@ -38,14 +38,17 @@ from backend.models import (
 from backend.orchestration.audio_studio import generate_sfx, generate_subtitles
 from backend.orchestration.director import (
     _log_agent_message,
+    approve_single_scene,
     create_project,
     get_project_detail,
     list_projects,
     pause_production,
+    regenerate_project_stage,
     regenerate_single_scene,
     run_production,
     subscribe_events,
     unsubscribe_events,
+    update_project_visual_style,
 )
 from backend.orchestration.engine_registry import get_engine_catalog
 from backend.orchestration.renderer import export_final_deliverable
@@ -437,13 +440,36 @@ def api_list_formats() -> dict[str, Any]:
     return {"formats": [{"key": k, **v} for k, v in FORMAT_CATALOG.items()]}
 
 
+@app.post("/api/intake/interpret")
+def api_intake_interpret(payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.services.intake_service import interpret_prompt_preview
+    prompt = str(payload.get("prompt", "")).strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    return interpret_prompt_preview(
+        prompt=prompt,
+        references=payload.get("references"),
+        uploads=payload.get("uploads"),
+        preferences=payload.get("preferences"),
+        production_mode=payload.get("production_mode"),
+    )
+
+
 @app.post("/api/intake/start")
 def api_intake_start(payload: dict[str, Any]) -> dict[str, Any]:
     from backend.services.intake_service import start_intake
     prompt = str(payload.get("prompt", "")).strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
-    return start_intake(prompt, title=payload.get("title"), language=payload.get("language", "en"))
+    return start_intake(
+        prompt,
+        title=payload.get("title"),
+        language=payload.get("language", "en"),
+        preferences=payload.get("preferences"),
+        references=payload.get("references"),
+        uploads=payload.get("uploads"),
+        production_mode=payload.get("production_mode"),
+    )
 
 
 @app.post("/api/intake/{project_id}/answer")
@@ -468,7 +494,9 @@ def api_run_research(project_id: str, allow_web: bool = True) -> dict[str, Any]:
 async def api_upload_reference(
     project_id: str,
     file: UploadFile = File(...),
-    intended_role: str = "visual_inspiration",
+    intended_role: str = "visual_style",
+    roles: str | None = None,
+    user_notes: str = "",
     permissions: str = "user_owned",
 ) -> dict[str, Any]:
     from backend.services.reference_service import register_and_analyze_reference
@@ -481,7 +509,64 @@ async def api_upload_reference(
     safe_name = Path(file.filename or "reference.bin").name
     dest = ref_dir / f"{uuid.uuid4().hex[:6]}_{safe_name}"
     dest.write_bytes(await file.read())
-    return register_and_analyze_reference(project_id, ws, dest, intended_role=intended_role, permissions=permissions)
+    role_list = [r.strip() for r in roles.split(",") if r.strip()] if roles else [intended_role]
+    return register_and_analyze_reference(
+        project_id,
+        ws,
+        dest,
+        intended_role=intended_role,
+        permissions=permissions,
+        roles=role_list,
+        user_notes=user_notes,
+    )
+
+
+@app.post("/api/projects/{project_id}/references/url")
+def api_add_url_reference(project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.services.reference_service import register_url_reference
+    detail = get_project_detail(project_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Project not found")
+    url = str(payload.get("url", "")).strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+    roles = payload.get("roles") or ([payload["role"]] if payload.get("role") else None)
+    user_notes = str(payload.get("user_notes") or payload.get("notes") or "")
+    return register_url_reference(project_id=project_id, url=url, roles=roles, user_notes=user_notes)
+
+
+@app.post("/api/projects/{project_id}/references/analyze")
+def api_analyze_project_references(project_id: str) -> dict[str, Any]:
+    from backend.services.reference_service import analyze_project_references
+    detail = get_project_detail(project_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return analyze_project_references(project_id)
+
+
+@app.post("/api/projects/{project_id}/scenes/{scene_id}/approve")
+def api_approve_scene(project_id: str, scene_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    body = payload or {}
+    res = approve_single_scene(
+        project_id=project_id,
+        scene_id=scene_id,
+        approved=bool(body.get("approved", True)),
+        notes=str(body.get("notes", "")),
+    )
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Scene not found"))
+    return res
+
+
+@app.post("/api/projects/{project_id}/visual-style")
+def api_update_visual_style(project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    style = str(payload.get("visual_style", "")).strip()
+    if not style:
+        raise HTTPException(status_code=400, detail="visual_style is required")
+    res = update_project_visual_style(project_id, style)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Project not found"))
+    return res
 
 
 @app.get("/api/projects/{project_id}/package")
@@ -640,6 +725,166 @@ def api_repair_animated_short(payload: dict[str, Any]) -> dict[str, Any]:
         master_prompt=master_prompt,
         category=payload.get("category"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Unified v1 Production API (/api/v1/productions/*) — Shared Entry Point
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/v1/productions")
+def api_v1_create_production(req: ProjectCreateRequest) -> dict[str, Any]:
+    detail = create_project(req)
+    return {
+        "ok": True,
+        "production_id": detail["project"]["id"],
+        "project_id": detail["project"]["id"],
+        **detail,
+    }
+
+
+@app.get("/api/v1/productions/{production_id}")
+def api_v1_get_production(production_id: str) -> dict[str, Any]:
+    detail = get_project_detail(production_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Production not found")
+    return {
+        "ok": True,
+        "production_id": production_id,
+        **detail,
+    }
+
+
+@app.get("/api/v1/productions/{production_id}/events")
+async def api_v1_production_events(production_id: str) -> StreamingResponse:
+    return await api_project_events(production_id)
+
+
+@app.post("/api/v1/productions/{production_id}/references")
+def api_v1_add_reference(production_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.services.reference_service import register_url_reference
+    detail = get_project_detail(production_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Production not found")
+    items = payload.get("references")
+    if isinstance(items, list):
+        added = []
+        for item in items:
+            if isinstance(item, dict) and item.get("url"):
+                added.append(
+                    register_url_reference(
+                        project_id=production_id,
+                        url=str(item["url"]),
+                        roles=item.get("roles") or ([item["role"]] if item.get("role") else None),
+                        user_notes=str(item.get("user_notes") or item.get("notes") or ""),
+                    )
+                )
+            elif isinstance(item, str) and item.strip():
+                added.append(register_url_reference(project_id=production_id, url=item.strip()))
+        return {"ok": True, "production_id": production_id, "references": added}
+    url = str(payload.get("url", "")).strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url or references list is required")
+    roles = payload.get("roles") or ([payload["role"]] if payload.get("role") else None)
+    notes = str(payload.get("user_notes") or payload.get("notes") or "")
+    rec = register_url_reference(project_id=production_id, url=url, roles=roles, user_notes=notes)
+    return {"ok": True, "production_id": production_id, "reference": rec}
+
+
+@app.post("/api/v1/productions/{production_id}/uploads")
+async def api_v1_upload_reference(
+    production_id: str,
+    file: UploadFile = File(...),
+    intended_role: str = "visual_style",
+    roles: str | None = None,
+    user_notes: str = "",
+    permissions: str = "user_owned",
+) -> dict[str, Any]:
+    return await api_upload_reference(
+        project_id=production_id,
+        file=file,
+        intended_role=intended_role,
+        roles=roles,
+        user_notes=user_notes,
+        permissions=permissions,
+    )
+
+
+@app.post("/api/v1/productions/{production_id}/analyze-references")
+def api_v1_analyze_references(production_id: str) -> dict[str, Any]:
+    from backend.services.reference_service import analyze_project_references
+    detail = get_project_detail(production_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Production not found")
+    return analyze_project_references(production_id)
+
+
+@app.post("/api/v1/productions/{production_id}/approve-brief")
+def api_v1_approve_brief(production_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    from backend.services.intake_service import approve_production_brief
+    body = payload or {}
+    res = approve_production_brief(production_id, edits=body.get("edits") or body)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Production not found"))
+    return res
+
+
+@app.post("/api/v1/productions/{production_id}/research")
+def api_v1_research(production_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    res = regenerate_project_stage(production_id, "research", instructions=str((payload or {}).get("instructions", "")))
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Production not found"))
+    return res
+
+
+@app.post("/api/v1/productions/{production_id}/script")
+def api_v1_script(production_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    res = regenerate_project_stage(production_id, "script", instructions=str((payload or {}).get("instructions", "")))
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Production not found"))
+    return res
+
+
+@app.post("/api/v1/productions/{production_id}/storyboard")
+def api_v1_storyboard(production_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    res = regenerate_project_stage(production_id, "storyboard", instructions=str((payload or {}).get("instructions", "")))
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Production not found"))
+    return res
+
+
+@app.post("/api/v1/productions/{production_id}/scenes/{scene_id}/approve")
+def api_v1_approve_scene(production_id: str, scene_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    return api_approve_scene(production_id, scene_id, payload)
+
+
+@app.post("/api/v1/productions/{production_id}/scenes/{scene_id}/regenerate")
+def api_v1_regenerate_scene(production_id: str, scene_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    body = dict(payload or {})
+    req = SceneRegenerateRequest(
+        scene_id=scene_id,
+        narration_text=body.get("narration_text"),
+        visual_prompt=body.get("visual_prompt") or body.get("instructions"),
+        render_engine=body.get("render_engine"),
+        visual_style=body.get("visual_style"),
+        preserve_manual_edits=bool(body.get("preserve_manual_edits", True)),
+    )
+    return api_regenerate_scene(production_id, req)
+
+
+@app.post("/api/v1/productions/{production_id}/render")
+def api_v1_render_production(
+    production_id: str,
+    background_tasks: BackgroundTasks,
+    sync: bool = True,
+    enforce_approval: bool = False,
+) -> dict[str, Any]:
+    return api_run_project(production_id, background_tasks, sync=sync, enforce_approval=enforce_approval)
+
+
+@app.post("/api/v1/productions/{production_id}/export")
+def api_v1_export_production(production_id: str, req: ExportRequest | None = None) -> dict[str, Any]:
+    return api_export_project(production_id, req or ExportRequest())
 
 
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "desktop" / "dist"

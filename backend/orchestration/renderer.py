@@ -39,6 +39,7 @@ def render_scene_clip(
     scene_index: int = 0,
     excluded_sha256: set[str] | None = None,
     source_media: str | None = None,
+    production_mode: str | None = None,
 ) -> dict[str, Any]:
     """Render a real scene clip via Antigravity/Cloud/3D/Motion/Archival Media."""
     output_mp4.parent.mkdir(parents=True, exist_ok=True)
@@ -53,6 +54,7 @@ def render_scene_clip(
         scene_index=scene_index,
         excluded_sha256=excluded_sha256,
         source_media=source_media,
+        production_mode=production_mode,
     )
     if not res.get("ok") or not output_mp4.is_file():
         raise RuntimeError(f"Real shot generation failed for scene '{scene.get('id', 'unknown')}': {res.get('reason')} | attempts={res.get('attempts')}")
@@ -294,6 +296,7 @@ def export_final_deliverable(
     if subtitle_srt and Path(subtitle_srt).is_file():
         captions_burned = burn_captions(output_path, Path(subtitle_srt), width, height)
     return {
+        "ok": True,
         "success": True,
         "path": str(output_path),
         "output_path": str(output_path),

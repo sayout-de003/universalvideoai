@@ -132,11 +132,26 @@ def detect_hardware() -> HardwareProfile:
     binary_names = [
         "ffmpeg", "ffprobe", "node", "npx", "python3", "blender",
         "manim", "piper", "whisper-cpp", "whisper", "ollama", "yt-dlp", "say",
+        "libresprite", "aseprite", "opentoonz", "tcomposer", "krita", "gimp",
     ]
     binaries = {name: shutil.which(name) is not None for name in binary_names}
     if not binaries["blender"]:
         from backend.integrations.blender_adapter import find_blender_binary
         binaries["blender"] = find_blender_binary() is not None
+    if not binaries["libresprite"]:
+        for cand in ("/Applications/LibreSprite.app/Contents/MacOS/libresprite", "/Applications/Aseprite.app/Contents/MacOS/aseprite"):
+            if Path(cand).is_file():
+                binaries["libresprite"] = True
+                break
+    if not binaries["opentoonz"]:
+        for cand in ("/Applications/OpenToonz/OpenToonz.app/Contents/MacOS/OpenToonz", "/Applications/OpenToonz/OpenToonz.app/Contents/MacOS/tcomposer"):
+            if Path(cand).is_file():
+                binaries["opentoonz"] = True
+                break
+    if not binaries["krita"] and Path("/Applications/krita.app/Contents/MacOS/krita").is_file():
+        binaries["krita"] = True
+    if not binaries["gimp"] and Path("/Applications/GIMP.app/Contents/MacOS/gimp").is_file():
+        binaries["gimp"] = True
     chromium_path = detect_chromium_path()
     binaries["chromium"] = chromium_path is not None
 

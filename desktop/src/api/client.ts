@@ -55,6 +55,7 @@ export const studioClient = {
   exportProject: (id: string, body: Record<string, unknown>) => req<Record<string, unknown>>(`/api/projects/${id}/export`, { method: "POST", body: JSON.stringify(body) }),
   voiceCommand: (transcript: string, projectId?: string, confirmed = false) => req<Record<string, unknown>>("/api/voice/command", { method: "POST", body: JSON.stringify({ transcript, project_id: projectId, confirmed }) }),
   listFormats: () => req<{ formats: Array<Record<string, unknown>> }>("/api/formats"),
+  interpretPrompt: (body: Record<string, unknown>) => req<Record<string, unknown>>("/api/intake/interpret", { method: "POST", body: JSON.stringify(body) }),
   startIntake: (prompt: string) => req<Record<string, unknown>>("/api/intake/start", { method: "POST", body: JSON.stringify({ prompt }) }),
   answerIntake: (id: string, answers: Record<string, unknown>) => req<Record<string, unknown>>(`/api/intake/${id}/answer`, { method: "POST", body: JSON.stringify(answers) }),
   getPackage: (id: string) => req<{ project_id: string; artifacts: Array<Record<string, unknown>>; approval_status: { approved: boolean; missing_gates: string[] } }>(`/api/projects/${id}/package`),
@@ -62,6 +63,15 @@ export const studioClient = {
   addArtifactComment: (id: string, artifactName: string, commentText: string) => req<Record<string, unknown>>(`/api/projects/${id}/package/${encodeURIComponent(artifactName)}/comments`, { method: "POST", body: JSON.stringify({ comment_text: commentText }) }),
   approveGates: (id: string, gateName = "all") => req<Record<string, unknown>>(`/api/projects/${id}/gates/approve`, { method: "POST", body: JSON.stringify({ gate_name: gateName }) }),
   runResearch: (id: string) => req<Record<string, unknown>>(`/api/projects/${id}/research`, { method: "POST" }),
+  approveScene: (projectId: string, sceneId: string, approved = true, notes = "") => req<Record<string, unknown>>(`/api/projects/${projectId}/scenes/${sceneId}/approve`, { method: "POST", body: JSON.stringify({ approved, notes }) }),
+  updateVisualStyle: (projectId: string, visualStyle: string) => req<Record<string, unknown>>(`/api/projects/${projectId}/visual-style`, { method: "POST", body: JSON.stringify({ visual_style: visualStyle }) }),
+  addReferenceUrl: (projectId: string, url: string, roles?: string[], userNotes?: string) => req<Record<string, unknown>>(`/api/projects/${projectId}/references/url`, { method: "POST", body: JSON.stringify({ url, roles, user_notes: userNotes }) }),
+  analyzeReferences: (projectId: string) => req<Record<string, unknown>>(`/api/projects/${projectId}/references/analyze`, { method: "POST" }),
+  uploadReferenceFile: (projectId: string, file: File, roles = "visual_style", userNotes = "") => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return req<Record<string, unknown>>(`/api/projects/${projectId}/references/upload?intended_role=${encodeURIComponent(roles.split(",")[0] || "visual_style")}&roles=${encodeURIComponent(roles)}&user_notes=${encodeURIComponent(userNotes)}`, { method: "POST", body: fd });
+  },
   extractFile: (file: File) => {
     const fd = new FormData();
     fd.append("file", file);

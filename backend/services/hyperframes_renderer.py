@@ -140,9 +140,68 @@ const PALETTES = {
     sun: "#38bdf8", mountFar: "#0f172a", mountMid: "#1e3a8a",
     groundTop: "#0f172a", groundBot: "#020617",
     suit: "#0ea5e9", suitRim: "#7dd3fc", accent: "#34d399"
+  },
+  pixel_art: {
+    skyTop: "#1a1c2c", skyMid: "#3b5dc9", skyBot: "#ffcd75",
+    sun: "#f4f4f4", mountFar: "#333c57", mountMid: "#29366f",
+    groundTop: "#38b764", groundBot: "#257179",
+    suit: "#b13e53", suitRim: "#ef7d57", accent: "#73eff7"
+  },
+  "2d_illustrated": {
+    skyTop: "#1d3557", skyMid: "#457b9d", skyBot: "#f4a261",
+    sun: "#e9c46a", mountFar: "#264653", mountMid: "#2a9d8f",
+    groundTop: "#264653", groundBot: "#1d3557",
+    suit: "#e76f51", suitRim: "#f4a261", accent: "#e9c46a"
+  },
+  hand_drawn_storybook: {
+    skyTop: "#f6efe2", skyMid: "#ebd9be", skyBot: "#d9a066",
+    sun: "#e07a5f", mountFar: "#81b29a", mountMid: "#3d405b",
+    groundTop: "#6d597a", groundBot: "#355070",
+    suit: "#b56576", suitRim: "#eaac8b", accent: "#e07a5f"
   }
 };
 const pal = PALETTES[THEME] || PALETTES.pixar_character_world;
+
+function drawPixelArtScene(ctx, w, h, p, t) {
+  const grid = Math.max(4, Math.floor(w / 160));
+  const snap = (v) => Math.floor(v / grid) * grid;
+  ctx.imageSmoothingEnabled = false;
+
+  const bands = [pal.skyTop, "#29366f", pal.skyMid, "#41a6f6", pal.skyBot];
+  const bh = Math.ceil((h * 0.72) / bands.length);
+  for (let i = 0; i < bands.length; i++) {
+    ctx.fillStyle = bands[i];
+    ctx.fillRect(0, i * bh, w, bh + grid);
+  }
+
+  const sx = snap(w * 0.72 - p * w * 0.05);
+  const sy = snap(h * 0.22);
+  ctx.fillStyle = pal.sun;
+  ctx.fillRect(sx - grid * 5, sy - grid * 5, grid * 10, grid * 10);
+
+  ctx.fillStyle = pal.mountFar;
+  for (let x = 0; x < w; x += grid * 4) {
+    const mh = snap(h * 0.18 + Math.sin((x + t * 20) * 0.01) * h * 0.08);
+    ctx.fillRect(x, snap(h * 0.68) - mh, grid * 4, mh);
+  }
+
+  ctx.fillStyle = pal.groundTop;
+  ctx.fillRect(0, snap(h * 0.68), w, grid * 3);
+  ctx.fillStyle = pal.groundBot;
+  ctx.fillRect(0, snap(h * 0.68) + grid * 3, w, h);
+
+  const cx = snap(w * (0.26 + p * 0.18));
+  const cy = snap(h * 0.60);
+  const step = Math.floor(t * 6) % 2;
+  ctx.fillStyle = "#ffccaa";
+  ctx.fillRect(cx, cy - grid * 8, grid * 4, grid * 4);
+  ctx.fillStyle = pal.suit;
+  ctx.fillRect(cx - grid, cy - grid * 9, grid * 6, grid * 2);
+  ctx.fillRect(cx, cy - grid * 4, grid * 4, grid * 5);
+  ctx.fillStyle = "#1a1c2c";
+  ctx.fillRect(cx + (step ? -grid : 0), cy + grid, grid * 2, grid * 4);
+  ctx.fillRect(cx + (step ? grid * 3 : grid * 2), cy + grid, grid * 2, grid * 4);
+}
 
 function drawPixarCharacter(ctx, cx, cy, scale, t) {
   ctx.save();
@@ -282,6 +341,13 @@ window.__renderAtTime = (t) => {
   const p = Math.max(0, Math.min(1, t / Math.max(0.1, DURATION)));
   const ease = 1 - Math.pow(1 - Math.min(1, p * 2.8), 3);
 
+  if (THEME === "pixel_art") {
+    drawPixelArtScene(ctx, w, h, p, t);
+    document.getElementById("lowerThird").style.opacity = Math.min(1, p * 4.0);
+    document.getElementById("bar").style.width = `${(p * 100).toFixed(1)}%`;
+    return;
+  }
+
   // 1. Sky gradient
   const sky = ctx.createLinearGradient(0, 0, 0, h * 0.72);
   sky.addColorStop(0, pal.skyTop);
@@ -362,10 +428,24 @@ window.__renderAtTime = (t) => {
   ctx.stroke();
   ctx.restore();
 
-  // 7. Articulated Pixar-Style Character Walking Across Stage
+  // 7. Articulated Pixar-Style / 2D Illustrated / Storybook Character Walking Across Stage
   const charX = w * (0.28 + p * 0.14);
   const charY = h * 0.62;
   drawPixarCharacter(ctx, charX, charY, Math.min(w, h) / 680, t);
+
+  if (THEME === "hand_drawn_storybook") {
+    // Hand-drawn pencil sketch contour & warm parchment vignette overlay
+    ctx.save();
+    ctx.strokeStyle = "rgba(61, 64, 91, 0.42)";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(18, 18, w - 36, h - 36);
+    const vig = ctx.createRadialGradient(w * 0.5, h * 0.5, w * 0.25, w * 0.5, h * 0.5, w * 0.68);
+    vig.addColorStop(0, "rgba(246, 239, 226, 0)");
+    vig.addColorStop(1, "rgba(109, 89, 122, 0.28)");
+    ctx.fillStyle = vig;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
 
   // 8. Atmospheric Bokeh & Floating Light Particles
   for (let i = 0; i < 28; i++) {
@@ -404,7 +484,13 @@ def render_hyperframes_scene(
     title = html_lib.escape(str(scene.get("on_screen_text") or scene.get("title") or "Cinematic Scene")[:80])
     subline = html_lib.escape(str(scene.get("narration_segment") or scene.get("narration") or "")[:180])
     eyebrow = html_lib.escape(f"{category.replace('_', ' ').upper()} • {scene.get('speaker_name') or 'STUDIO ANIMATION'}")
-    theme = str(scene.get("animation_theme") or "pixar_character_world")
+    raw_style = str(scene.get("visual_style") or scene.get("animation_theme") or "").strip().lower()
+    if raw_style in ("pixel_art", "2d_illustrated", "hand_drawn_storybook", "pixar_character_world", "painterly_parallax", "kinetic_data_hud"):
+        theme = raw_style
+    elif raw_style == "3d_stylized":
+        theme = "pixar_character_world"
+    else:
+        theme = str(scene.get("animation_theme") or "pixar_character_world")
     seed = int(scene.get("order_index") or 1) + sum(ord(c) for c in title[:12])
 
     html = (

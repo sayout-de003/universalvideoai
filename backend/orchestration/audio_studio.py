@@ -63,12 +63,16 @@ def generate_tts(
     voice_id: str = "default",
     language: str = "en",
     rate_wpm: int = 165,
+    production_mode: str | None = None,
 ) -> dict[str, Any]:
+    from backend.orchestration.engine_registry import is_free_open_source_mode
+
     output_wav.parent.mkdir(parents=True, exist_ok=True)
     clean_text = text.strip() or "Silence."
+    free_mode = is_free_open_source_mode(production_mode)
 
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if openai_key and voice_id.startswith("openai:"):
+    if not free_mode and openai_key and voice_id.startswith("openai:"):
         try:
             from openai import OpenAI
             client = OpenAI(api_key=openai_key)

@@ -132,8 +132,24 @@ def _cast_voice_for_scene(scene_idx: int, total_scenes: int, wtype: str, prompt:
     return {"voice_gender": "female", "voice_id": "narrator_warm", "speaker_name": "Analytical Co-Narrator (Female)"}
 
 
-def _select_scene_animation_mode(scene_idx: int, total_scenes: int, wtype: str) -> tuple[str, str]:
-    """Select between Pixar-style 2D/3D Canvas character animation, Remotion data motion graphics, and cinema composites."""
+def _select_scene_animation_mode(
+    scene_idx: int,
+    total_scenes: int,
+    wtype: str,
+    visual_style: str | None = None,
+) -> tuple[str, str]:
+    """Select between Pixel Art, 2D Illustrated, 3D Stylized, Hand-Drawn Storybook, Pixar 2D/3D, and Remotion data HUD."""
+    vs = (visual_style or "").strip().lower()
+    if vs == "pixel_art":
+        return "hyperframes", "pixel_art"
+    if vs == "2d_illustrated":
+        return "hyperframes", "2d_illustrated"
+    if vs == "hand_drawn_storybook":
+        return "hyperframes", "hand_drawn_storybook"
+    if vs == "3d_stylized":
+        from backend.integrations.blender_adapter import get_blender_status
+        return ("blender" if get_blender_status().get("available") else "hyperframes"), "pixar_character_world"
+
     if wtype in ("animation_piece", "fiction_short_film"):
         return "hyperframes", "pixar_character_world"
     if wtype in ("commercial", "corporate_saas", "educational"):
@@ -158,8 +174,11 @@ def _try_llm_screenplay(
     style_guide: str,
     num_scenes: int,
     words_per_scene: int,
+    production_mode: str | None = None,
 ) -> list[dict[str, Any]] | None:
-    """Use configured OpenAI / Anthropic / Ollama LLM if available; return None if offline."""
+    """Use configured OpenAI / Anthropic / Ollama LLM if available; return None if offline or in free_open_source mode."""
+    from backend.orchestration.engine_registry import is_free_open_source_mode
+
     writer_type = fmt_spec["writer_type"]
     sys_prompt = SPECIALIST_PROMPTS.get(writer_type, SPECIALIST_PROMPTS["documentary"])
     claims_text = "\n".join(f"- {c['claim_text']}" for c in research_claims[:6]) or "None provided."
@@ -177,7 +196,7 @@ def _try_llm_screenplay(
     )
 
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if openai_key:
+    if openai_key and not is_free_open_source_mode(production_mode):
         try:
             r = requests.post(
                 "https://api.openai.com/v1/chat/completions",
@@ -378,6 +397,8 @@ def develop_and_write_screenplay(
     style_guide_md: str = "",
     uploaded_script: str | None = None,
     voice_mode: str = "auto",
+    visual_style: str | None = None,
+    production_mode: str | None = None,
 ) -> dict[str, Any]:
     """Run Story Architect -> Hollywood Screenplay Architect -> Script Doctor -> Evaluator."""
     from backend.services.document_parser import parse_structured_screenplay
@@ -397,7 +418,7 @@ def develop_and_write_screenplay(
         author_mode = "user_structured_screenplay"
         for i, sc in enumerate(scenes):
             cast = _cast_voice_for_scene(i, len(scenes), fmt_spec["writer_type"], uploaded_script or prompt, voice_mode=voice_mode)
-            eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"])
+            eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"], visual_style=visual_style)
             if voice_mode in ("male", "female", "dual"):
                 sc["voice_gender"] = cast["voice_gender"]
                 sc["voice_id"] = cast["voice_id"]
@@ -415,16 +436,23 @@ def develop_and_write_screenplay(
         spoken_budget_sec = max(1.5, per_scene_sec - 0.8)
         words_per_scene = max(6, int(round((spoken_budget_sec / 60.0) * fmt_spec["wpm"])))
 
-        scenes = _try_llm_screenplay(subject, fmt_spec, brief, claims, style_guide_md, num_scenes, words_per_scene)
+        scenes = _try_llm_screenplay(
+            subject, fmt_spec, brief, claims, style_guide_md, num_scenes, words_per_scene, production_mode=production_mode
+        )
         author_mode = "llm_specialist" if scenes else "hollywood_skill_architect"
         if not scenes:
             scenes = _build_specialist_scenes_offline(
                 subject, fmt_spec, brief, claims, num_scenes, words_per_scene, prompt=prompt, voice_mode=voice_mode
             )
+            if visual_style and visual_style != "auto":
+                for i, sc in enumerate(scenes):
+                    eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"], visual_style=visual_style)
+                    sc["preferred_scene_engine"] = eng
+                    sc["animation_theme"] = theme
         else:
             for i, sc in enumerate(scenes):
                 cast = _cast_voice_for_scene(i, len(scenes), fmt_spec["writer_type"], prompt, voice_mode=voice_mode)
-                eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"])
+                eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"], visual_style=visual_style)
                 sc.setdefault("voice_gender", cast["voice_gender"])
                 sc.setdefault("voice_id", cast["voice_id"])
                 sc.setdefault("speaker_name", cast["speaker_name"])

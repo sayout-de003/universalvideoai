@@ -26,7 +26,12 @@ from backend.orchestration.audio_studio import (
     mix_audio_stems,
     probe_duration,
 )
-from backend.orchestration.engine_registry import select_render_engine
+from backend.orchestration.engine_registry import (
+    VISUAL_STYLE_PROFILES,
+    is_free_open_source_mode,
+    resolve_visual_style_profile,
+    select_render_engine,
+)
 from backend.orchestration.qa import run_qa_verification
 from backend.orchestration.renderer import concat_video_clips, export_final_deliverable, render_scene_clip
 
@@ -109,29 +114,45 @@ def _derive_title(prompt: str) -> str:
 def create_project(req: ProjectCreateRequest) -> dict[str, Any]:
     from backend.services.document_parser import parse_structured_screenplay
     from backend.services.format_catalog import FORMAT_CATALOG, get_format_spec, resolve_format
+    from backend.services.reference_service import register_and_analyze_reference, register_url_reference
 
     project_id = f"proj_{uuid.uuid4().hex[:10]}"
     ws = PROJECTS_DIR / project_id
     for sub in ("assets", "audio", "stems", "renders", "subtitles", "exports", "deliverables", "package", "references"):
         (ws / sub).mkdir(parents=True, exist_ok=True)
 
-    parsed_script = parse_structured_screenplay(req.uploaded_script or req.prompt)
-    info = classify_brief(req.prompt, req.target_duration_sec or parsed_script.get("duration_sec"))
+    prefs = dict(req.preferences or {})
+    effective_format = req.video_format or prefs.get("video_format") or prefs.get("format")
+    effective_duration = req.target_duration_sec or prefs.get("target_duration_sec") or prefs.get("duration_sec")
+    effective_visual_style = req.visual_style or prefs.get("visual_style")
+    effective_prod_mode = str(req.production_mode or prefs.get("production_mode") or req.mode.value)
 
-    user_chose_format = bool(req.video_format and req.video_format in FORMAT_CATALOG)
-    fmt_key = req.video_format if user_chose_format else resolve_format( parsed_script.get("format_hint") or req.prompt )
+    parsed_script = parse_structured_screenplay(req.uploaded_script or req.prompt)
+    info = classify_brief(req.prompt, float(effective_duration) if effective_duration is not None else parsed_script.get("duration_sec"))
+
+    user_chose_format = bool(effective_format and effective_format in FORMAT_CATALOG)
+    fmt_key = str(effective_format) if user_chose_format else resolve_format(parsed_script.get("format_hint") or req.prompt)
     fmt_spec = get_format_spec(fmt_key)
     category = fmt_spec["category"] if user_chose_format else info["category"]
     pipeline_name = fmt_spec["pipeline"] or info["pipeline_name"]
 
-    user_chose_duration = req.target_duration_sec is not None
-    target_dur = float(req.target_duration_sec or parsed_script.get("duration_sec") or info["target_duration_sec"])
+    user_chose_duration = effective_duration is not None
+    target_dur = float(effective_duration or parsed_script.get("duration_sec") or info["target_duration_sec"])
+
+    user_chose_style = bool(effective_visual_style and effective_visual_style not in ("auto", ""))
+    visual_style = resolve_visual_style_profile(effective_visual_style, req.prompt)
+    style_meta = VISUAL_STYLE_PROFILES.get(visual_style, VISUAL_STYLE_PROFILES["2d_illustrated"])
 
     user_chose_engine = bool(req.preferred_render_engine)
-    render_engine, limitation_notice = select_render_engine(category, req.prompt, req.preferred_render_engine)
+    render_engine, limitation_notice = select_render_engine(
+        category,
+        req.prompt,
+        req.preferred_render_engine,
+        visual_style=visual_style if user_chose_style else None,
+    )
 
     user_chose_voice = bool(req.voice_mode and req.voice_mode not in ("auto", ""))
-    voice_mode = req.voice_mode or "auto"
+    voice_mode = req.voice_mode or str(prefs.get("voice_mode") or "auto")
 
     title = (req.title or parsed_script.get("title") or _derive_title(req.prompt))[:90]
     now = utc_now()
@@ -164,13 +185,33 @@ def create_project(req: ProjectCreateRequest) -> dict[str, Any]:
                 )
             ),
         },
+        "visual_style": {
+            "selected": style_meta["label"],
+            "style_key": visual_style,
+            "chosen_by": "user" if user_chose_style else "ai_director",
+            "reasoning": (
+                f"User explicitly selected visual style '{style_meta['label']}' ({visual_style})."
+                if user_chose_style
+                else f"AI Director selected '{style_meta['label']}' ({visual_style}) based on topic and aesthetic cues."
+            ),
+        },
+        "production_mode": {
+            "selected": effective_prod_mode,
+            "free_open_source_enforced": is_free_open_source_mode(effective_prod_mode),
+            "chosen_by": "user" if (req.production_mode or prefs.get("production_mode")) else "ai_director",
+            "reasoning": (
+                "Strict Free & Open-Source policy active: all paid cloud video, image, LLM, and TTS APIs are blocked."
+                if is_free_open_source_mode(effective_prod_mode)
+                else f"Production running in '{effective_prod_mode}' mode."
+            ),
+        },
         "render_engine": {
-            "selected": req.preferred_render_engine or "hybrid (HyperFrames Pixar 2D/3D + Remotion Motion Graphics)",
+            "selected": req.preferred_render_engine or f"{render_engine} ({style_meta['label']})",
             "chosen_by": "user" if user_chose_engine else "ai_director",
             "reasoning": (
                 f"User explicitly selected render engine '{req.preferred_render_engine}'."
                 if user_chose_engine
-                else f"AI Director orchestrated multi-engine rendering: Pixar-style 2D/3D Canvas character & parallax world animation (HyperFrames) + Remotion kinetic data motion graphics + smooth FFmpeg xfade transitions."
+                else f"AI Director orchestrated multi-engine rendering ({render_engine}) tailored for {style_meta['label']} + smooth FFmpeg xfade transitions."
             ),
         },
         "voice_casting": {
@@ -192,19 +233,22 @@ def create_project(req: ProjectCreateRequest) -> dict[str, Any]:
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO projects
-               (id, title, prompt, category, mode, pipeline_name, render_engine, target_duration_sec,
-                aspect_ratio, resolution, fps, language, subtitle_languages_json, status, current_stage,
+               (id, title, prompt, category, mode, pipeline_name, render_engine, visual_style, production_mode_policy,
+                target_duration_sec, aspect_ratio, resolution, fps, language, subtitle_languages_json, status, current_stage,
                 budget_limit_usd, workspace_dir, metadata_json, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 project_id, title, req.prompt, category, req.mode.value, pipeline_name,
-                render_engine, target_dur, aspect, resolution, req.fps, req.language,
+                render_engine, visual_style, effective_prod_mode,
+                target_dur, aspect, resolution, req.fps, req.language,
                 json.dumps(req.subtitle_languages), "planned", ProductionStage.IDEA.value,
                 req.budget_limit_usd, str(ws),
                 json.dumps({
                     "limitation_notice": limitation_notice,
                     "format_key": fmt_key,
                     "voice_mode": voice_mode,
+                    "visual_style": visual_style,
+                    "production_mode_policy": effective_prod_mode,
                     "ai_decisions": ai_decisions,
                 }),
                 now, now,
@@ -221,21 +265,54 @@ def create_project(req: ProjectCreateRequest) -> dict[str, Any]:
                VALUES (?, 1, 'brief_confirmed', ?, ?, ?, ?, ?, '[]', '[]', ?)""",
             (
                 project_id, fmt_key, target_dur, req.language,
-                json.dumps({"idea": title, "video_format": fmt_key, "target_duration_sec": target_dur, "voice_mode": voice_mode}),
+                json.dumps({
+                    "idea": title,
+                    "video_format": fmt_key,
+                    "target_duration_sec": target_dur,
+                    "voice_mode": voice_mode,
+                    "visual_style": visual_style,
+                    "production_mode": effective_prod_mode,
+                }),
                 json.dumps(ai_decisions),
                 now,
             ),
         )
 
+    # Ingest any initial reference URLs or uploaded files before planning scenes & bible
+    if req.reference_video_url:
+        register_url_reference(project_id, req.reference_video_url, ["visual_style", "story_reference"], "Primary reference URL")
+    for ref_item in (req.references or []):
+        if isinstance(ref_item, dict) and ref_item.get("url"):
+            register_url_reference(
+                project_id=project_id,
+                url=str(ref_item["url"]),
+                roles=ref_item.get("roles") or ([ref_item["role"]] if ref_item.get("role") else None),
+                user_notes=str(ref_item.get("user_notes") or ref_item.get("notes") or ""),
+            )
+        elif isinstance(ref_item, str) and ref_item.strip():
+            register_url_reference(project_id=project_id, url=ref_item.strip())
+    for up_item in (req.uploads or []):
+        if isinstance(up_item, dict) and up_item.get("file_path"):
+            fp = Path(str(up_item["file_path"]))
+            if fp.is_file():
+                roles_val = up_item.get("roles") or ([up_item["role"]] if up_item.get("role") else ["visual_style"])
+                register_and_analyze_reference(
+                    project_id=project_id,
+                    file_path=fp,
+                    intended_role=roles_val[0] if isinstance(roles_val, list) and roles_val else str(roles_val),
+                    roles=roles_val if isinstance(roles_val, list) else [str(roles_val)],
+                    user_notes=str(up_item.get("user_notes") or up_item.get("notes") or ""),
+                )
+
     _log_agent_message(
         project_id, "Executive Producer",
-        f"Classified brief '{title}' as '{fmt_spec['label']}' ({category}) -> pipeline '{pipeline_name}', engine '{render_engine}', target {target_dur:.1f}s."
+        f"Classified brief '{title}' as '{fmt_spec['label']}' ({category}) -> pipeline '{pipeline_name}', style '{visual_style}', engine '{render_engine}', target {target_dur:.1f}s."
         + (f" Note: {limitation_notice}" if limitation_notice else ""),
         metadata={"ai_decisions": ai_decisions},
     )
     for dec_key, dec_val in ai_decisions.items():
         emit_studio_event(project_id, "ai_decision", {"parameter": dec_key, **dec_val})
-        if dec_val["chosen_by"] != "user":
+        if dec_val.get("chosen_by") != "user":
             _log_agent_message(
                 project_id,
                 "AI Decision Engine",
@@ -245,9 +322,10 @@ def create_project(req: ProjectCreateRequest) -> dict[str, Any]:
     _plan_hierarchy_and_bible(
         project_id, title, req.prompt, category, target_dur, render_engine,
         req.language, req.uploaded_script, fmt_key=fmt_key, voice_mode=voice_mode,
+        visual_style=visual_style, production_mode=effective_prod_mode,
     )
-    _save_checkpoint(project_id, ProductionStage.IDEA.value, "completed", {"category": category, "pipeline": pipeline_name, "format_key": fmt_key})
-    openmontage_adapter.write_openmontage_checkpoint(ws, "idea", "completed", {"title": title, "category": category}, human_approved=True)
+    _save_checkpoint(project_id, ProductionStage.IDEA.value, "completed", {"category": category, "pipeline": pipeline_name, "format_key": fmt_key, "visual_style": visual_style})
+    openmontage_adapter.write_openmontage_checkpoint(ws, "idea", "completed", {"title": title, "category": category, "visual_style": visual_style}, human_approved=True)
     return get_project_detail(project_id)
 
 
@@ -255,6 +333,7 @@ def _plan_hierarchy_and_bible(
     project_id: str, title: str, prompt: str, category: str, target_dur: float,
     render_engine: str, language: str, uploaded_script: str | None = None,
     fmt_key: str = "documentaries", voice_mode: str = "auto",
+    visual_style: str = "2d_illustrated", production_mode: str = "hybrid",
 ) -> None:
     from backend.services.format_catalog import get_format_spec
     from backend.services.package_service import build_full_production_package
@@ -281,11 +360,13 @@ def _plan_hierarchy_and_bible(
     script_pkg = develop_and_write_screenplay(
         prompt=prompt,
         format_key=fmt_key,
-        brief={"target_duration_sec": target_dur, "language": language},
+        brief={"target_duration_sec": target_dur, "language": language, "visual_style": visual_style, "production_mode": production_mode},
         research_claims=research_pkg.get("claims", []),
         style_guide_md=ref_pkg.get("style_guide_md", ""),
         uploaded_script=uploaded_script,
         voice_mode=voice_mode,
+        visual_style=visual_style,
+        production_mode=production_mode,
     )
     generated_scenes = script_pkg["scenes"]
     num_chapters = 4 if (target_dur > 360 and len(generated_scenes) >= 8) else (2 if len(generated_scenes) > 4 else 1)
@@ -359,19 +440,20 @@ def _plan_hierarchy_and_bible(
                 vis_desc = sc_spec["visual_description"]
                 scene_dur = float(sc_spec["duration_sec"])
                 scene_engine = sc_spec.get("preferred_scene_engine") or render_engine if render_engine == "ffmpeg" else render_engine
+                scene_style = sc_spec.get("visual_style") or visual_style
                 scene_voice = sc_spec.get("voice_id") or ("narrator_deep" if scene_idx_global % 2 == 0 else "narrator_warm")
                 scene_trans = sc_spec.get("transition") or ("smoothleft" if s_i > 0 else "cut")
                 conn.execute(
                     """INSERT INTO scenes
                        (id, project_id, chapter_id, sequence_id, order_index, title, script_segment,
                         narration_segment, visual_description, generation_prompt, generation_method,
-                        render_engine, provider, character_refs_json, environment_ref, duration_sec, transition, quality_status, approved)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0)""",
+                        render_engine, visual_style, provider, character_refs_json, environment_ref, duration_sec, transition, quality_status, approved)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0)""",
                     (
                         scene_id, project_id, chap_id, seq_id, scene_idx_global,
                         scene_title, narration, narration, vis_desc, vis_desc,
-                        "3d_scene" if scene_engine in ("threejs", "blender") else ("2d_character_animation" if scene_engine == "hyperframes" else "procedural_motion"),
-                        scene_engine, scene_voice, json.dumps([char_id]), loc_id, scene_dur, scene_trans,
+                        "3d_scene" if scene_engine in ("threejs", "blender") else ("2d_character_animation" if scene_engine in ("hyperframes", "libresprite", "opentoonz") else "procedural_motion"),
+                        scene_engine, scene_style, scene_voice, json.dumps([char_id]), loc_id, scene_dur, scene_trans,
                     ),
                 )
                 conn.execute(
@@ -478,6 +560,8 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                 else ("narrator_deep" if idx % 2 == 0 else "narrator_warm")
             )
             scene_engine = sc.get("render_engine") or project["render_engine"]
+            scene_style = sc.get("visual_style") or project.get("visual_style") or "2d_illustrated"
+            prod_mode_policy = project.get("production_mode_policy") or project.get("mode") or "hybrid"
             voice_label = "Male Neural (ChristopherNeural)" if scene_voice in ("narrator_deep", "character_1", "male") else "Female Neural (AriaNeural)"
             emit_studio_event(
                 project_id,
@@ -488,6 +572,7 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                     "total": len(scenes),
                     "title": sc["title"],
                     "engine": scene_engine,
+                    "visual_style": scene_style,
                     "voice": voice_label,
                     "transition": sc.get("transition") or "smoothleft",
                 },
@@ -495,9 +580,15 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
             _log_agent_message(
                 project_id,
                 "Production Orchestrator",
-                f"Scene {idx + 1}/{len(scenes)} ({sc['title']}): Synthesizing {voice_label} voice + rendering via '{scene_engine}' with '{sc.get('transition') or 'smoothleft'}' transition.",
+                f"Scene {idx + 1}/{len(scenes)} ({sc['title']}): Synthesizing {voice_label} voice + rendering via '{scene_engine}' (style '{scene_style}') with '{sc.get('transition') or 'smoothleft'}' transition.",
             )
-            tts_res = generate_tts(sc["narration_segment"] or sc["title"], scene_wav, voice_id=scene_voice, language=project["language"])
+            tts_res = generate_tts(
+                sc["narration_segment"] or sc["title"],
+                scene_wav,
+                voice_id=scene_voice,
+                language=project["language"],
+                production_mode=prod_mode_policy,
+            )
             actual_audio_dur = float(tts_res.get("duration_sec") or sc["duration_sec"])
             target_scene_dur = max(float(sc["duration_sec"]), actual_audio_dur + 0.4)
             emit_studio_event(
@@ -515,6 +606,7 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
             render_res = render_scene_clip(
                 {
                     **sc,
+                    "visual_style": scene_style,
                     "duration_sec": target_scene_dur,
                     "camera_movement": shot.get("camera_movement") or sc.get("camera_movement"),
                     "lighting": shot.get("lighting") or sc.get("lighting"),
@@ -528,6 +620,7 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                 scene_index=idx,
                 excluded_sha256=used_hashes,
                 source_media=footage[idx % len(footage)] if footage else None,
+                production_mode=prod_mode_policy,
             )
             with get_conn() as conn:
                 v_asset_id, a_asset_id = f"ast_{uuid.uuid4().hex[:8]}", f"ast_{uuid.uuid4().hex[:8]}"
@@ -656,25 +749,35 @@ def regenerate_single_scene(project_id: str, req: SceneRegenerateRequest) -> dic
 
     new_narration = req.narration_text if req.narration_text is not None else scene["narration_segment"]
     new_prompt = req.visual_prompt if req.visual_prompt is not None else scene["generation_prompt"]
-    new_engine = req.render_engine or scene["render_engine"]
+    new_style = req.visual_style or scene.get("visual_style") or project.get("visual_style") or "2d_illustrated"
+    if req.visual_style and not req.render_engine:
+        style_meta = VISUAL_STYLE_PROFILES.get(new_style, {})
+        new_engine = style_meta.get("default_engine") or scene["render_engine"]
+    else:
+        new_engine = req.render_engine or scene["render_engine"]
+    prod_mode_policy = project.get("production_mode_policy") or project.get("mode") or "hybrid"
     scene_wav = ws / "audio" / f"{scene['id']}_narration.wav"
     scene_mp4 = ws / "renders" / f"{scene['id']}.mp4"
 
     from backend.services.screenwriting_service import _extract_subject
-    tts_res = generate_tts(new_narration, scene_wav, language=project["language"])
+    tts_res = generate_tts(new_narration, scene_wav, language=project["language"], production_mode=prod_mode_policy)
     new_dur = max(float(scene["duration_sec"]), float(tts_res.get("duration_sec", 4.0)) + 0.4)
     render_scene_clip(
-        {**scene, "generation_prompt": new_prompt, "duration_sec": new_dur},
+        {**scene, "generation_prompt": new_prompt, "visual_style": new_style, "duration_sec": new_dur},
         scene_mp4,
         category=project["category"],
         resolution=project["resolution"],
         fps=int(project["fps"]),
         render_engine=new_engine,
         project_topic=_extract_subject(project["prompt"]) or project["title"],
+        production_mode=prod_mode_policy,
     )
 
     with get_conn() as conn:
-        conn.execute("UPDATE scenes SET narration_segment=?, generation_prompt=?, render_engine=?, duration_sec=?, quality_status='generated' WHERE id=?", (new_narration, new_prompt, new_engine, new_dur, scene["id"]))
+        conn.execute(
+            "UPDATE scenes SET narration_segment=?, generation_prompt=?, render_engine=?, visual_style=?, duration_sec=?, quality_status='generated' WHERE id=?",
+            (new_narration, new_prompt, new_engine, new_style, new_dur, scene["id"]),
+        )
         if req.preserve_manual_edits:
             conn.execute("UPDATE timeline_clips SET duration_sec=? WHERE project_id=? AND scene_id=? AND manual_edited=0", (new_dur, project_id, scene["id"]))
 
@@ -692,9 +795,81 @@ def regenerate_single_scene(project_id: str, req: SceneRegenerateRequest) -> dic
         if master_mix.exists():
             export_final_deliverable(silent_master, master_mix, ws / "exports" / "final_production.mp4", resolution=project["resolution"], fps=int(project["fps"]))
 
-    _log_agent_message(project_id, "Video Editor Agent", f"Regenerated scene '{scene['title']}' in isolation; manual edits in other scenes preserved.")
-    emit_studio_event(project_id, "scene_regenerated", {"scene_id": scene["id"]})
-    return {"ok": True, "scene_id": scene["id"], "project": get_project_detail(project_id)}
+    _log_agent_message(project_id, "Video Editor Agent", f"Regenerated scene '{scene['title']}' in isolation (style '{new_style}', engine '{new_engine}'); manual edits in other scenes preserved.")
+    emit_studio_event(project_id, "scene_regenerated", {"scene_id": scene["id"], "visual_style": new_style, "render_engine": new_engine})
+    return {"ok": True, "scene_id": scene["id"], "visual_style": new_style, "render_engine": new_engine, "project": get_project_detail(project_id)}
+
+
+def approve_single_scene(project_id: str, scene_id: str, approved: bool = True, notes: str = "") -> dict[str, Any]:
+    with get_conn() as conn:
+        row = row_to_dict(conn.execute("SELECT * FROM scenes WHERE id=? AND project_id=?", (scene_id, project_id)).fetchone())
+        if not row:
+            return {"ok": False, "error": f"Scene '{scene_id}' not found in project '{project_id}'"}
+        conn.execute("UPDATE scenes SET approved=? WHERE id=? AND project_id=?", (1 if approved else 0, scene_id, project_id))
+    _log_agent_message(
+        project_id,
+        "Producer Gatekeeper",
+        f"Scene '{row['title']}' ({scene_id}) marked as {'APPROVED' if approved else 'NEEDS REVISION'}." + (f" Notes: {notes}" if notes else ""),
+    )
+    emit_studio_event(project_id, "scene_approval_updated", {"scene_id": scene_id, "approved": approved, "notes": notes})
+    return {"ok": True, "project_id": project_id, "scene_id": scene_id, "approved": approved}
+
+
+def update_project_visual_style(project_id: str, visual_style: str) -> dict[str, Any]:
+    resolved = resolve_visual_style_profile(visual_style)
+    style_meta = VISUAL_STYLE_PROFILES.get(resolved, VISUAL_STYLE_PROFILES["2d_illustrated"])
+    new_engine = style_meta["default_engine"]
+    with get_conn() as conn:
+        proj = row_to_dict(conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
+        if not proj:
+            return {"ok": False, "error": f"Project '{project_id}' not found"}
+        meta = dict(proj.get("metadata") or {})
+        meta["visual_style"] = resolved
+        conn.execute(
+            "UPDATE projects SET visual_style=?, render_engine=?, metadata_json=?, updated_at=? WHERE id=?",
+            (resolved, new_engine, json.dumps(meta), utc_now(), project_id),
+        )
+        conn.execute(
+            "UPDATE scenes SET visual_style=?, render_engine=? WHERE project_id=?",
+            (resolved, new_engine, project_id),
+        )
+    _log_agent_message(project_id, "Art Director", f"Updated project visual style to '{style_meta['label']}' ({resolved}) and render engine to '{new_engine}'.")
+    emit_studio_event(project_id, "visual_style_updated", {"visual_style": resolved, "render_engine": new_engine})
+    return {"ok": True, "project_id": project_id, "visual_style": resolved, "render_engine": new_engine, "project": get_project_detail(project_id)}
+
+
+def regenerate_project_stage(project_id: str, stage: str, instructions: str = "") -> dict[str, Any]:
+    detail = get_project_detail(project_id)
+    if not detail:
+        return {"ok": False, "error": f"Project '{project_id}' not found"}
+    proj = detail["project"]
+    ws = Path(proj["workspace_dir"])
+    meta = proj.get("metadata") or {}
+    fmt_key = meta.get("format_key") or "documentaries"
+    voice_mode = meta.get("voice_mode") or "auto"
+    visual_style = proj.get("visual_style") or meta.get("visual_style") or "2d_illustrated"
+    prod_mode = proj.get("production_mode_policy") or meta.get("production_mode_policy") or proj.get("mode") or "hybrid"
+
+    if stage == "research":
+        from backend.services.research_service import run_project_research
+        res = run_project_research(project_id, proj["title"], ws, allow_web=True)
+        _save_checkpoint(project_id, ProductionStage.RESEARCH.value, "completed", {"claims_count": res.get("claims_count", 0)})
+        return {"ok": True, "stage": "research", "research": res, "project": get_project_detail(project_id)}
+
+    if stage in ("script", "storyboard"):
+        with get_conn() as conn:
+            for tbl in ("shots", "scenes", "sequences", "chapters", "speakers", "characters", "locations", "props"):
+                conn.execute(f"DELETE FROM {tbl} WHERE project_id=?", (project_id,))
+        prompt_text = f"{proj['prompt']}\n{instructions}".strip() if instructions else proj["prompt"]
+        _plan_hierarchy_and_bible(
+            project_id, proj["title"], prompt_text, proj["category"], float(proj["target_duration_sec"]),
+            proj["render_engine"], proj["language"], None, fmt_key=fmt_key, voice_mode=voice_mode,
+            visual_style=visual_style, production_mode=prod_mode,
+        )
+        _save_checkpoint(project_id, ProductionStage.STORYBOARD.value if stage == "storyboard" else ProductionStage.SCRIPT.value, "completed", {"stage": stage})
+        return {"ok": True, "stage": stage, "project": get_project_detail(project_id)}
+
+    return {"ok": False, "error": f"Unsupported stage '{stage}'"}
 
 
 def _sync_timeline_from_production(project_id: str, scenes_with_timings: list[dict[str, Any]]) -> None:

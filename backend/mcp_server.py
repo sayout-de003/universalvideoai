@@ -10,8 +10,16 @@ from typing import Any
 from backend.db import init_db
 from backend.integrations.blender_adapter import apply_animation_and_export, render_blender_scene
 from backend.integrations.lemo_opuscar_adapter import lemo_opuscar_adapter
-from backend.models import ProjectCreateRequest
-from backend.orchestration.director import create_project, get_project_detail, run_production
+from backend.models import ExportRequest, ProjectCreateRequest, SceneRegenerateRequest
+from backend.orchestration.director import (
+    approve_single_scene,
+    create_project,
+    get_project_detail,
+    regenerate_project_stage,
+    regenerate_single_scene,
+    run_production,
+)
+from backend.orchestration.renderer import export_final_deliverable
 from backend.orchestration.shot_orchestrator import plan_screenplay_shots, regenerate_shot, render_single_shot
 from backend.services.animated_short_film_service import build_animated_short_package, diagnose_and_repair_shot
 from backend.services.character_asset_service import (
@@ -21,8 +29,13 @@ from backend.services.character_asset_service import (
     validate_and_cleanup_mesh,
 )
 from backend.services.format_catalog import FORMAT_CATALOG
-from backend.services.intake_service import start_intake, submit_intake_answers
+from backend.services.intake_service import approve_production_brief, start_intake, submit_intake_answers
 from backend.services.package_service import approve_all_mandatory_gates, list_package_artifacts
+from backend.services.reference_service import (
+    analyze_project_references,
+    register_and_analyze_reference,
+    register_url_reference,
+)
 
 TOOLS = [
     {"name": "studio_list_formats", "description": "List all 25 supported video formats and their rules.", "inputSchema": {"type": "object", "properties": {}}},
@@ -175,6 +188,181 @@ TOOLS = [
             "required": ["issue_description", "master_prompt"],
         },
     },
+    # ------------------------------------------------------------------
+    # First-class Antigravity Production Tools (Shared Pipeline)
+    # ------------------------------------------------------------------
+    {
+        "name": "create_production",
+        "description": "Create a new production from a natural-language prompt, optional URL references, uploaded files, visual style, and preferences.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string"},
+                "title": {"type": "string"},
+                "target_duration_sec": {"type": "number"},
+                "video_format": {"type": "string"},
+                "visual_style": {"type": "string", "description": "pixel_art | 2d_illustrated | 3d_stylized | hand_drawn_storybook"},
+                "production_mode": {"type": "string", "description": "free_open_source | hybrid | local_free | professional"},
+                "references": {"type": "array", "items": {"type": "object"}},
+                "uploads": {"type": "array", "items": {"type": "object"}},
+                "preferences": {"type": "object"},
+            },
+            "required": ["prompt"],
+        },
+    },
+    {
+        "name": "add_production_reference",
+        "description": "Register and resolve a reference URL (YouTube, Instagram, Website, Direct Media) with role classification and honest access reporting.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "production_id": {"type": "string"},
+                "url": {"type": "string"},
+                "roles": {"type": "array", "items": {"type": "string"}},
+                "user_notes": {"type": "string"},
+            },
+            "required": ["production_id", "url"],
+        },
+    },
+    {
+        "name": "upload_production_asset",
+        "description": "Attach and analyze a local file (image, video, audio, PDF/DOCX/TXT document) as a reference asset on a production.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "production_id": {"type": "string"},
+                "file_path": {"type": "string"},
+                "roles": {"type": "array", "items": {"type": "string"}},
+                "user_notes": {"type": "string"},
+            },
+            "required": ["production_id", "file_path"],
+        },
+    },
+    {
+        "name": "analyze_references",
+        "description": "Re-analyze all references attached to a production and compile the unified reference style guide and bible.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"production_id": {"type": "string"}},
+            "required": ["production_id"],
+        },
+    },
+    {
+        "name": "get_production_brief",
+        "description": "Inspect the structured creative brief, AI decisions, reference summary, and pending questions for a production.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"production_id": {"type": "string"}},
+            "required": ["production_id"],
+        },
+    },
+    {
+        "name": "approve_production_brief",
+        "description": "Approve the creative brief (and optionally apply edits to visual_style, target_duration_sec, video_format, production_mode).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "production_id": {"type": "string"},
+                "edits": {"type": "object"},
+            },
+            "required": ["production_id"],
+        },
+    },
+    {
+        "name": "generate_research",
+        "description": "Run or refresh factual research and claim verification for a production.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"production_id": {"type": "string"}, "instructions": {"type": "string"}},
+            "required": ["production_id"],
+        },
+    },
+    {
+        "name": "generate_script",
+        "description": "Generate or regenerate the structured multi-scene screenplay and Production Bible.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"production_id": {"type": "string"}, "instructions": {"type": "string"}},
+            "required": ["production_id"],
+        },
+    },
+    {
+        "name": "generate_storyboard",
+        "description": "Generate or regenerate the storyboard scenes, shot cards, and camera/lighting plan.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"production_id": {"type": "string"}, "instructions": {"type": "string"}},
+            "required": ["production_id"],
+        },
+    },
+    {
+        "name": "get_production_status",
+        "description": "Get full status, scenes, references, checkpoints, QA reports, and deliverables for a production.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"production_id": {"type": "string"}},
+            "required": ["production_id"],
+        },
+    },
+    {
+        "name": "approve_scene",
+        "description": "Approve or request revision on a specific scene in a production.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "production_id": {"type": "string"},
+                "scene_id": {"type": "string"},
+                "approved": {"type": "boolean"},
+                "notes": {"type": "string"},
+            },
+            "required": ["production_id", "scene_id"],
+        },
+    },
+    {
+        "name": "regenerate_scene",
+        "description": "Regenerate a single scene in isolation (optionally overriding narration, visual prompt, render engine, or visual style) without rebuilding other scenes.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "production_id": {"type": "string"},
+                "scene_id": {"type": "string"},
+                "instructions": {"type": "string"},
+                "narration_text": {"type": "string"},
+                "visual_prompt": {"type": "string"},
+                "render_engine": {"type": "string"},
+                "visual_style": {"type": "string"},
+            },
+            "required": ["production_id", "scene_id"],
+        },
+    },
+    {
+        "name": "render_production",
+        "description": "Execute full multi-scene rendering, neural voice synthesis, music/stem mixing, subtitle generation, and QA verification.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "production_id": {"type": "string"},
+                "resume": {"type": "boolean"},
+                "enforce_approval": {"type": "boolean"},
+            },
+            "required": ["production_id"],
+        },
+    },
+    {
+        "name": "export_production",
+        "description": "Export the final rendered production with custom format, codec, or resolution.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "production_id": {"type": "string"},
+                "format": {"type": "string"},
+                "codec": {"type": "string"},
+                "resolution": {"type": "string"},
+                "fps": {"type": "integer"},
+            },
+            "required": ["production_id"],
+        },
+    },
 ]
 
 
@@ -269,6 +457,114 @@ def handle_tool_call(name: str, args: dict[str, Any]) -> Any:
             master_prompt=str(args["master_prompt"]),
             category=args.get("category"),
         )
+    if name == "create_production":
+        req = ProjectCreateRequest(
+            prompt=str(args["prompt"]),
+            title=args.get("title"),
+            target_duration_sec=args.get("target_duration_sec"),
+            video_format=args.get("video_format"),
+            visual_style=args.get("visual_style"),
+            production_mode=args.get("production_mode"),
+            references=args.get("references") or [],
+            uploads=args.get("uploads") or [],
+            preferences=args.get("preferences") or {},
+        )
+        detail = create_project(req)
+        return {"ok": True, "production_id": detail["project"]["id"], "project_id": detail["project"]["id"], **detail}
+    if name == "add_production_reference":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        return register_url_reference(
+            project_id=pid,
+            url=str(args["url"]),
+            roles=args.get("roles"),
+            user_notes=str(args.get("user_notes") or ""),
+        )
+    if name == "upload_production_asset":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        fp = Path(str(args["file_path"]))
+        roles = args.get("roles") or ["visual_style"]
+        return register_and_analyze_reference(
+            project_id=pid,
+            file_path=fp,
+            intended_role=roles[0] if isinstance(roles, list) and roles else "visual_style",
+            roles=roles if isinstance(roles, list) else [str(roles)],
+            user_notes=str(args.get("user_notes") or ""),
+        )
+    if name == "analyze_references":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        return analyze_project_references(pid)
+    if name == "get_production_brief":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        detail = get_project_detail(pid)
+        if not detail:
+            return {"ok": False, "error": f"Production '{pid}' not found"}
+        return {
+            "ok": True,
+            "production_id": pid,
+            "project": detail["project"],
+            "creative_brief": detail["creative_brief"],
+            "reference_assets": detail["reference_assets"],
+        }
+    if name == "approve_production_brief":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        return approve_production_brief(pid, edits=args.get("edits"))
+    if name == "generate_research":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        return regenerate_project_stage(pid, "research", instructions=str(args.get("instructions") or ""))
+    if name == "generate_script":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        return regenerate_project_stage(pid, "script", instructions=str(args.get("instructions") or ""))
+    if name == "generate_storyboard":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        return regenerate_project_stage(pid, "storyboard", instructions=str(args.get("instructions") or ""))
+    if name == "get_production_status":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        detail = get_project_detail(pid)
+        if not detail:
+            return {"ok": False, "error": f"Production '{pid}' not found"}
+        return {"ok": True, "production_id": pid, **detail}
+    if name == "approve_scene":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        return approve_single_scene(
+            project_id=pid,
+            scene_id=str(args["scene_id"]),
+            approved=bool(args.get("approved", True)),
+            notes=str(args.get("notes") or ""),
+        )
+    if name == "regenerate_scene":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        req = SceneRegenerateRequest(
+            scene_id=str(args["scene_id"]),
+            narration_text=args.get("narration_text"),
+            visual_prompt=args.get("visual_prompt") or args.get("instructions"),
+            render_engine=args.get("render_engine"),
+            visual_style=args.get("visual_style"),
+        )
+        return regenerate_single_scene(pid, req)
+    if name == "render_production":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        return run_production(
+            pid,
+            resume=bool(args.get("resume", False)),
+            enforce_approval=bool(args.get("enforce_approval", False)),
+        )
+    if name == "export_production":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        detail = get_project_detail(pid)
+        if not detail:
+            return {"ok": False, "error": f"Production '{pid}' not found"}
+        ws = Path(detail["project"]["workspace_dir"])
+        silent_master = ws / "renders" / "master_video_only.mp4"
+        master_mix = ws / "stems" / "master_mix.wav"
+        if not silent_master.exists() or not master_mix.exists():
+            run_production(pid, resume=True, enforce_approval=False)
+        fmt = str(args.get("format") or "mp4")
+        codec = str(args.get("codec") or "h264")
+        res = str(args.get("resolution") or detail["project"]["resolution"])
+        fps = int(args.get("fps") or detail["project"]["fps"])
+        out_path = ws / "exports" / f"export_{res}_{codec}.{fmt}"
+        chapters = [{"title": c["title"], "duration_sec": c["target_duration_sec"]} for c in detail["chapters"]]
+        return export_final_deliverable(silent_master, master_mix, out_path, chapters=chapters, fmt=fmt, codec=codec, resolution=res, fps=fps)
     raise ValueError(f"Unknown tool: {name}")
 
 

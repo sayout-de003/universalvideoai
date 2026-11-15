@@ -1,10 +1,38 @@
 import { useRef, useState } from "react";
-import { ChevronDown, ChevronRight, FileText, Play, Sparkles, Upload } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Link2, Play, Plus, ShieldCheck, Sparkles, Trash2, Upload } from "lucide-react";
 import { studioClient, type ExtractedFileResult } from "../api/client";
 
-interface Props {
-  onCreate: (payload: Record<string, unknown>, runImmediately: boolean) => Promise<void>;
+export interface PendingRefUpload {
+  file: File;
+  role: string;
+  userNotes: string;
 }
+
+interface Props {
+  onCreate: (payload: Record<string, unknown>, runImmediately: boolean, refFiles?: PendingRefUpload[]) => Promise<void>;
+}
+
+const VISUAL_STYLES = [
+  { id: "", label: "Let AI decide", note: "Matches visual style from your prompt & references" },
+  { id: "pixel_art", label: "Pixel Art", note: "Crisp 16-bit sprites, stepped palette, LibreSprite / Canvas" },
+  { id: "2d_illustrated", label: "2D Illustrated", note: "Vector & cel-shaded character animation, HyperFrames / Remotion" },
+  { id: "3d_stylized", label: "3D Stylized", note: "Rigged 3D characters, PBR lighting, Headless Blender / Three.js" },
+  { id: "hand_drawn_storybook", label: "Hand-Drawn Storybook", note: "Watercolor parchment, sketchy ink contours, OpenToonz / Canvas" },
+];
+
+const REFERENCE_ROLES = [
+  { id: "visual_style", label: "Visual Style" },
+  { id: "character_reference", label: "Character Design" },
+  { id: "environment_reference", label: "Environment / World" },
+  { id: "camera_reference", label: "Camera & Framing" },
+  { id: "animation_reference", label: "Animation & Motion" },
+  { id: "story_reference", label: "Story & Pacing" },
+  { id: "factual_source", label: "Factual Source / Research" },
+  { id: "voice_reference", label: "Voice Reference" },
+  { id: "music_reference", label: "Music Reference" },
+  { id: "sound_reference", label: "Sound Design" },
+  { id: "brand_reference", label: "Brand / Logo" },
+];
 
 const LENGTHS: Array<{ label: string; sec: string }> = [
   { label: "Let AI decide", sec: "" },
@@ -41,6 +69,8 @@ const VOICES = [
 const ENGINES = [
   { id: "", label: "Let AI decide (Pixar 2D/3D + Remotion Motion Graphics + xfade)" },
   { id: "hyperframes", label: "Pixar 2D/3D Character & Parallax Animation (HyperFrames)" },
+  { id: "libresprite", label: "Pixel Art Sprite & Tilemap Pipeline (LibreSprite / Canvas)" },
+  { id: "opentoonz", label: "Hand-Drawn Storybook & Watercolor Pipeline (OpenToonz / Canvas)" },
   { id: "remotion", label: "Kinetic Motion Graphics & Data HUD (Remotion)" },
   { id: "threejs", label: "3D WebGL Scenes (Three.js)" },
   { id: "blender", label: "3D Rigged Character Animation (Blender)" },
@@ -51,6 +81,8 @@ export function NewProjectView({ onCreate }: Props) {
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
   const [videoFormat, setVideoFormat] = useState("");
+  const [visualStyle, setVisualStyle] = useState("");
+  const [productionMode, setProductionMode] = useState<"free_open_source" | "hybrid" | "professional">("free_open_source");
   const [voiceMode, setVoiceMode] = useState("auto");
   const [shape, setShape] = useState(SHAPES[0]);
   const [lengthSec, setLengthSec] = useState("");
@@ -60,12 +92,66 @@ export function NewProjectView({ onCreate }: Props) {
   const [subLangs, setSubLangs] = useState("en");
   const [uploadedScript, setUploadedScript] = useState("");
   const [refUrl, setRefUrl] = useState("");
+  const [refRole, setRefRole] = useState("visual_style");
+  const [refNotes, setRefNotes] = useState("");
+  const [refLinks, setRefLinks] = useState<Array<{ url: string; role: string; user_notes: string }>>([]);
+  const [refFiles, setRefFiles] = useState<PendingRefUpload[]>([]);
+  const [refFileRole, setRefFileRole] = useState("visual_style");
+  const [refFileNotes, setRefFileNotes] = useState("");
   const [engine, setEngine] = useState("");
-  const [loading, setLoading] = useState<"plan" | "run" | null>(null);
+  const [loading, setLoading] = useState<"plan" | "run" | "interpret" | null>(null);
+  const [briefPreview, setBriefPreview] = useState<Record<string, unknown> | null>(null);
   const [fileBusy, setFileBusy] = useState(false);
   const [fileInfo, setFileInfo] = useState<ExtractedFileResult | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const refMediaInputRef = useRef<HTMLInputElement | null>(null);
+
+  const addRefLink = () => {
+    const trimmed = refUrl.trim();
+    if (!trimmed) return;
+    setRefLinks((prev) => [...prev, { url: trimmed, role: refRole, user_notes: refNotes.trim() }]);
+    setRefUrl("");
+    setRefNotes("");
+  };
+
+  const addRefFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const next: PendingRefUpload[] = [];
+    Array.from(files).forEach((f) => {
+      next.push({ file: f, role: refFileRole, userNotes: refFileNotes.trim() });
+    });
+    setRefFiles((prev) => [...prev, ...next]);
+    setRefFileNotes("");
+  };
+
+  const handleInterpret = async () => {
+    const effectivePrompt = prompt.trim() || uploadedScript.trim();
+    if (!effectivePrompt) return;
+    setLoading("interpret");
+    try {
+      const allRefs = [
+        ...refLinks.map((r) => ({ url: r.url, roles: [r.role], user_notes: r.user_notes })),
+        ...(refUrl.trim() ? [{ url: refUrl.trim(), roles: [refRole], user_notes: refNotes.trim() }] : []),
+      ];
+      const res = await studioClient.interpretPrompt({
+        prompt: effectivePrompt,
+        production_mode: productionMode,
+        preferences: {
+          video_format: videoFormat || undefined,
+          visual_style: visualStyle || undefined,
+          target_duration_sec: lengthSec ? Number(lengthSec) : undefined,
+        },
+        references: allRefs,
+        uploads: refFiles.map((f) => ({ filename: f.file.name, roles: [f.role], user_notes: f.userNotes })),
+      });
+      setBriefPreview(res);
+    } catch (err) {
+      setFileError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(null);
+    }
+  };
 
   const handleFileUpload = async (file: File) => {
     setFileBusy(true);
@@ -116,11 +202,17 @@ export function NewProjectView({ onCreate }: Props) {
     if (!effectivePrompt) return;
     setLoading(runNow ? "run" : "plan");
     try {
+      const allRefs = [
+        ...refLinks.map((r) => ({ url: r.url, roles: [r.role], user_notes: r.user_notes })),
+        ...(refUrl.trim() ? [{ url: refUrl.trim(), roles: [refRole], user_notes: refNotes.trim() }] : []),
+      ];
       await onCreate({
         title: title.trim() || null,
         prompt: effectivePrompt,
         mode,
+        production_mode: productionMode,
         video_format: videoFormat || null,
+        visual_style: visualStyle || null,
         voice_mode: voiceMode || "auto",
         aspect_ratio: shape.id,
         resolution: shape.res,
@@ -129,8 +221,9 @@ export function NewProjectView({ onCreate }: Props) {
         subtitle_languages: subLangs.split(",").map((s) => s.trim()).filter(Boolean),
         uploaded_script: uploadedScript.trim() || null,
         reference_video_url: refUrl.trim() || null,
+        references: allRefs,
         preferred_render_engine: engine || null,
-      }, runNow);
+      }, runNow, refFiles);
     } finally {
       setLoading(null);
     }
@@ -224,6 +317,159 @@ export function NewProjectView({ onCreate }: Props) {
         </div>
 
         <fieldset>
+          <legend className="label">Visual style & animation profile</legend>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            {VISUAL_STYLES.map((st) => (
+              <button
+                key={st.id || "auto"}
+                type="button"
+                onClick={() => setVisualStyle(st.id)}
+                aria-pressed={visualStyle === st.id}
+                className={`text-left rounded-lg border px-3 py-2.5 ${visualStyle === st.id ? "border-ink bg-ink text-white" : "border-rule bg-panel hover:border-ink"}`}
+              >
+                <div className="font-semibold text-[13px]">{st.label}</div>
+                <div className={`text-xs mt-0.5 ${visualStyle === st.id ? "text-[#b9c2cb]" : "text-mute"}`}>{st.note}</div>
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend className="label">Production mode & cost policy</legend>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={() => setProductionMode("free_open_source")}
+              aria-pressed={productionMode === "free_open_source"}
+              className={`text-left rounded-lg border px-3 py-2.5 ${productionMode === "free_open_source" ? "border-ink bg-ink text-white" : "border-rule bg-panel hover:border-ink"}`}
+            >
+              <div className="font-semibold text-[13px] flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5" /> Free & Open-Source
+              </div>
+              <div className={`text-xs mt-0.5 ${productionMode === "free_open_source" ? "text-[#b9c2cb]" : "text-mute"}`}>
+                100% local & free engines (Blender, LibreSprite, OpenToonz, HyperFrames, Remotion, Edge-TTS, FFmpeg). Blocks all paid APIs.
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => setProductionMode("hybrid")}
+              aria-pressed={productionMode === "hybrid"}
+              className={`text-left rounded-lg border px-3 py-2.5 ${productionMode === "hybrid" ? "border-ink bg-ink text-white" : "border-rule bg-panel hover:border-ink"}`}
+            >
+              <div className="font-semibold text-[13px]">Hybrid / Automatic</div>
+              <div className={`text-xs mt-0.5 ${productionMode === "hybrid" ? "text-[#b9c2cb]" : "text-mute"}`}>
+                Combines local open-source engines with configured cloud providers when helpful.
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => { setProductionMode("professional"); setMode("professional"); }}
+              aria-pressed={productionMode === "professional"}
+              className={`text-left rounded-lg border px-3 py-2.5 ${productionMode === "professional" ? "border-ink bg-ink text-white" : "border-rule bg-panel hover:border-ink"}`}
+            >
+              <div className="font-semibold text-[13px]">Professional Studio</div>
+              <div className={`text-xs mt-0.5 ${productionMode === "professional" ? "text-[#b9c2cb]" : "text-mute"}`}>
+                Full manual approval gates, multi-engine routing, and frame-accurate control.
+              </div>
+            </button>
+          </div>
+        </fieldset>
+
+        {/* Reference Links & Uploaded Reference Media */}
+        <div className="rounded-lg border border-rule p-4 space-y-3 bg-sunken/50">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-semibold text-[13.5px] flex items-center gap-1.5">
+                <Link2 className="w-4 h-4" /> Reference Links & Media Attachments
+              </div>
+              <p className="hint">Attach YouTube videos/channels, Instagram public posts/Reels/profiles, websites, or upload images, videos, audio, and PDFs with explicit roles.</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_1fr_auto] gap-2 items-center">
+            <input
+              className="field text-[13px]"
+              value={refUrl}
+              onChange={(e) => setRefUrl(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addRefLink())}
+              placeholder="Paste YouTube, Instagram, or Web URL…"
+            />
+            <select className="field text-[13px]" value={refRole} onChange={(e) => setRefRole(e.target.value)}>
+              {REFERENCE_ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+            </select>
+            <input
+              className="field text-[13px]"
+              value={refNotes}
+              onChange={(e) => setRefNotes(e.target.value)}
+              placeholder="Notes (e.g. 'use this color palette & pacing')"
+            />
+            <button type="button" onClick={addRefLink} className="btn btn-quiet text-xs py-2 px-3">
+              <Plus className="w-3.5 h-3.5" /> Add URL
+            </button>
+          </div>
+
+          {refLinks.length > 0 && (
+            <ul className="space-y-1.5">
+              {refLinks.map((item, idx) => (
+                <li key={idx} className="rounded border border-rule bg-panel px-3 py-1.5 text-xs flex items-center justify-between gap-2">
+                  <div className="min-w-0 truncate">
+                    <span className="chip mr-2">{item.role}</span>
+                    <span className="font-mono text-ink">{item.url}</span>
+                    {item.user_notes && <span className="text-slate ml-2">— “{item.user_notes}”</span>}
+                  </div>
+                  <button type="button" onClick={() => setRefLinks((prev) => prev.filter((_, i) => i !== idx))} className="text-slate hover:text-live">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-[180px_1fr_auto] gap-2 items-center pt-2 border-t border-rule">
+            <select className="field text-[13px]" value={refFileRole} onChange={(e) => setRefFileRole(e.target.value)}>
+              {REFERENCE_ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+            </select>
+            <input
+              className="field text-[13px]"
+              value={refFileNotes}
+              onChange={(e) => setRefFileNotes(e.target.value)}
+              placeholder="Notes for uploaded reference files (optional)…"
+            />
+            <div>
+              <input
+                ref={refMediaInputRef}
+                type="file"
+                multiple
+                accept="image/*,video/*,audio/*,.pdf,.docx,.txt,.md"
+                className="hidden"
+                onChange={(e) => addRefFiles(e.target.files)}
+              />
+              <button type="button" onClick={() => refMediaInputRef.current?.click()} className="btn btn-quiet text-xs py-2 px-3">
+                <Upload className="w-3.5 h-3.5" /> Attach Images / Videos / Docs
+              </button>
+            </div>
+          </div>
+
+          {refFiles.length > 0 && (
+            <ul className="space-y-1.5">
+              {refFiles.map((rf, idx) => (
+                <li key={idx} className="rounded border border-rule bg-panel px-3 py-1.5 text-xs flex items-center justify-between gap-2">
+                  <div className="min-w-0 truncate">
+                    <span className="chip mr-2">{rf.role}</span>
+                    <span className="font-semibold">{rf.file.name}</span>
+                    <span className="text-mute ml-1.5">({Math.round(rf.file.size / 1024)} KB)</span>
+                    {rf.userNotes && <span className="text-slate ml-2">— “{rf.userNotes}”</span>}
+                  </div>
+                  <button type="button" onClick={() => setRefFiles((prev) => prev.filter((_, i) => i !== idx))} className="text-slate hover:text-live">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <fieldset>
           <legend className="label">Length</legend>
           <div className="flex flex-wrap items-center gap-2">
             {LENGTHS.map((l) => (
@@ -302,12 +548,48 @@ export function NewProjectView({ onCreate }: Props) {
           </span>
         </div>
 
+        {briefPreview && (
+          <div className="rounded-lg border border-ink/30 bg-panel p-4 space-y-2 text-[13px]">
+            <div className="font-bold flex items-center justify-between">
+              <span>AI Production Summary Preview</span>
+              <span className="chip text-xs">{String((briefPreview.production_summary as Record<string, unknown>)?.visual_direction || visualStyle || "Auto")}</span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+              <div className="p-2 rounded bg-sunken">
+                <div className="text-mute">Format</div>
+                <div className="font-semibold">{String((briefPreview.production_summary as Record<string, unknown>)?.format || "Auto")}</div>
+              </div>
+              <div className="p-2 rounded bg-sunken">
+                <div className="text-mute">Duration</div>
+                <div className="font-semibold">{String((briefPreview.production_summary as Record<string, unknown>)?.duration || "Auto")}</div>
+              </div>
+              <div className="p-2 rounded bg-sunken">
+                <div className="text-mute">Visual Direction</div>
+                <div className="font-semibold">{String((briefPreview.production_summary as Record<string, unknown>)?.visual_direction || "Auto")}</div>
+              </div>
+              <div className="p-2 rounded bg-sunken">
+                <div className="text-mute">References</div>
+                <div className="font-semibold">{String((briefPreview.production_summary as Record<string, unknown>)?.reference_material || "0")}</div>
+              </div>
+            </div>
+            {Array.isArray(briefPreview.questions) && briefPreview.questions.length > 0 && (
+              <div className="text-xs text-slate pt-1">
+                <span className="font-semibold text-ink">Suggested clarifications: </span>
+                {(briefPreview.questions as Array<Record<string, unknown>>).map((q) => String(q.question)).join(" • ")}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-rule">
           <button disabled={loading !== null || (!prompt.trim() && !uploadedScript.trim())} onClick={() => submit(false)} className="btn btn-primary mt-5">
             <FileText className="w-4 h-4" /> {loading === "plan" ? "Researching & writing script…" : "Write the script first"}
           </button>
           <button disabled={loading !== null || (!prompt.trim() && !uploadedScript.trim())} onClick={() => submit(true)} className="btn btn-quiet mt-5">
             <Play className="w-4 h-4" /> {loading === "run" ? "Starting…" : "Skip review and make the video"}
+          </button>
+          <button type="button" disabled={loading !== null || (!prompt.trim() && !uploadedScript.trim())} onClick={handleInterpret} className="btn btn-ghost mt-5">
+            <Sparkles className="w-4 h-4" /> {loading === "interpret" ? "Analyzing brief…" : "Preview AI interpretation"}
           </button>
         </div>
       </div>

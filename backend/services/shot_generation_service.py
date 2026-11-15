@@ -295,17 +295,36 @@ def generate_shot_for_scene(
     scene_index: int = 0,
     excluded_sha256: set[str] | None = None,
     source_media: str | None = None,
+    production_mode: str | None = None,
 ) -> dict[str, Any]:
     """Generate a real cinematic shot using priority routing; never falls back to Pillow shapes."""
+    from backend.orchestration.engine_registry import is_free_open_source_mode
+
     width, height = (int(x) for x in resolution.split("x"))
     duration = max(2.0, float(scene.get("duration_sec", 4.0) or 4.0))
     policy = get_format_visual_policy(category)
     motion_preset = motion_for_scene(scene, scene_index)
     picture = scene_picture_prompt(scene, project_topic=project_topic)
     aspect = _aspect_from_size(width, height)
+
+    effective_engine = render_engine
+    if effective_engine == "libresprite":
+        effective_engine = "hyperframes"
+        scene = {**scene, "visual_style": "pixel_art"}
+    elif effective_engine == "opentoonz":
+        effective_engine = "hyperframes"
+        scene = {**scene, "visual_style": "2d_illustrated"}
+
     scene = {**scene, "picture_prompt": picture, "camera_movement": scene.get("camera_movement") or motion_preset}
     ag = AntigravityAdapter()
-    strategy = ag.route_shot_strategy(category, requested_engine=render_engine)
+    strategy = ag.route_shot_strategy(category, requested_engine=effective_engine)
+
+    free_mode = is_free_open_source_mode(production_mode or str(scene.get("production_mode") or ""))
+    if free_mode:
+        strategy = [t for t in strategy if t not in ("cloud_video", "cloud_image_kenburns")]
+        if effective_engine in ("blender", "threejs", "remotion", "hyperframes") and effective_engine not in strategy:
+            strategy.insert(0, effective_engine)
+
     attempts: list[dict[str, Any]] = []
 
     user_path = Path(source_media) if source_media else None
