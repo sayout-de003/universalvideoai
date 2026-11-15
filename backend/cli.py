@@ -53,6 +53,23 @@ def main() -> None:
     anim.add_argument("--project-id", default="animated_short", help="Project folder name under projects/ (creates references/, prompts/, renders/, final/)")
     anim.add_argument("--execute-plates", action="store_true", help="Generate reference plates using configured cloud image provider")
 
+    sk_parser = sub.add_parser("animation", help="Claude Animation Skills Suite")
+    sk_sub = sk_parser.add_subparsers(dest="animation_cmd", required=True)
+
+    sk_sub.add_parser("list", help="List all 9 integrated Claude Animation Skills")
+    sk_sub.add_parser("styles", help="List 83 styles in Claude Drawing Skill")
+
+    sk_draw = sk_sub.add_parser("draw", help="Procedurally render an illustration in any Claude Drawing style")
+    sk_draw.add_argument("style", help="Style slug (e.g. blueprint, artdeco, bauhaus)")
+    sk_draw.add_argument("output", help="Output image file path (.png)")
+    sk_draw.add_argument("--width", type=int, default=1200)
+    sk_draw.add_argument("--height", type=int, default=800)
+
+    sk_rev = sk_sub.add_parser("review", help="Audit motion design plan against Disney & Lottie principles")
+    sk_rev.add_argument("--timing", type=float, default=1.0, help="Movement duration in seconds")
+    sk_rev.add_argument("--easing", default="easeInOut", help="Easing curve")
+    sk_rev.add_argument("--elements", type=int, default=1, help="Simultaneous moving elements")
+
     args = parser.parse_args()
     ensure_directories()
     init_db()
@@ -69,6 +86,38 @@ def main() -> None:
         )
         print(json.dumps(pkg, indent=2))
         return
+
+    if args.command == "animation":
+        from backend.integrations.animation_skills_adapter import animation_skills_adapter
+
+        if args.animation_cmd == "list":
+            skills = animation_skills_adapter.list_skills()
+            print(json.dumps({"count": len(skills), "skills": skills}, indent=2))
+            return
+
+        if args.animation_cmd == "styles":
+            styles = animation_skills_adapter.list_claude_drawing_styles()
+            print(json.dumps({"count": len(styles), "styles": styles}, indent=2))
+            return
+
+        if args.animation_cmd == "draw":
+            res = animation_skills_adapter.render_claude_drawing(
+                style=args.style,
+                output_path=args.output,
+                width=args.width,
+                height=args.height,
+            )
+            print(json.dumps(res, indent=2))
+            return
+
+        if args.animation_cmd == "review":
+            res = animation_skills_adapter.review_motion_design({
+                "timing_sec": args.timing,
+                "easing": args.easing,
+                "active_elements": args.elements,
+            })
+            print(json.dumps(res, indent=2))
+            return
 
     if args.command == "produce":
         res_map = {"16:9": "1920x1080", "9:16": "1080x1920", "1:1": "1080x1080"}

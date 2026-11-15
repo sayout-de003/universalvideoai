@@ -315,7 +315,46 @@ def generate_shot_for_scene(
         scene = {**scene, "visual_style": "pixel_art"}
     elif effective_engine == "opentoonz":
         effective_engine = "hyperframes"
-        scene = {**scene, "visual_style": "2d_illustrated"}
+        scene = {**scene, "visual_style": "cartoon_2d"}
+
+    # Enrich visual style and character continuity from project context if missing
+    project_id = scene.get("project_id")
+    if project_id:
+        try:
+            with get_conn() as conn:
+                if not scene.get("visual_style"):
+                    prow = conn.execute("SELECT visual_style, metadata_json FROM projects WHERE id=?", (project_id,)).fetchone()
+                    if prow and prow[0] and prow[0] != "auto":
+                        scene = {**scene, "visual_style": prow[0]}
+                    elif prow and prow[1]:
+                        meta = json.loads(prow[1])
+                        if meta.get("visual_style"):
+                            scene = {**scene, "visual_style": meta["visual_style"]}
+                if not scene.get("character_name"):
+                    if scene.get("character_id"):
+                        crow = conn.execute(
+                            "SELECT name, visual_description, clothing FROM characters WHERE id=?",
+                            (scene["character_id"],),
+                        ).fetchone()
+                    else:
+                        crow = conn.execute(
+                            "SELECT name, visual_description, clothing FROM characters WHERE project_id=? ORDER BY ROWID ASC LIMIT 1",
+                            (project_id,),
+                        ).fetchone()
+                    if crow:
+                        desc_parts = [crow[1]]
+                        if crow[2]:
+                            desc_parts.append(f"Wardrobe: {crow[2]}")
+                        scene = {
+                            **scene,
+                            "character_name": crow[0],
+                            "character_description": " | ".join(p for p in desc_parts if p),
+                        }
+        except Exception:
+            pass
+
+    if not scene.get("character_name") and project_topic:
+        scene = {**scene, "character_name": project_topic}
 
     scene = {**scene, "picture_prompt": picture, "camera_movement": scene.get("camera_movement") or motion_preset}
     ag = AntigravityAdapter()

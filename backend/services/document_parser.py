@@ -79,18 +79,25 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
 
     # 3. Universal Scene Block Matching
     header_regex = re.compile(
-        r"(?:^|\n)\s*((?:##+\s*SCENE\s+\d+|SCENE\s+\d+|Scene\s+\d+|\[\s*SCENE\s+\d+\s*\]|\d+\.\s*Scene\b|EXT\.|INT\.)[^\n]*)",
+        r"(?:^|\n)\s*((?:##+\s*(?:SCENE|ACT)\b|(?:\(?\bACT\s+\d+.*?\bSCENE\s+\d+\)?)|SCENE\s+\d+|Scene\s+\d+|\[\s*SCENE\s+\d+\s*\]|\(\s*(?:ACT\s+\d+.*?)?Scene\s+\d+\s*\)|\d+\.\s*Scene\b|EXT\.|INT\.)[^\n]*)",
         re.IGNORECASE,
     )
     headers = list(header_regex.finditer(normalized))
+    blocks: list[tuple[str, str]] = []
+
+    if headers:
+        for idx, h in enumerate(headers):
+            h_line = h.group(1).strip()
+            body_start = h.end()
+            body_end = headers[idx + 1].start() if idx + 1 < len(headers) else len(normalized)
+            blocks.append((h_line, normalized[body_start:body_end].strip()))
+    elif re.search(r"\b(?:VISUAL|NARRATION|VO|DIALOGUE|NARRATOR)\b", normalized, flags=re.IGNORECASE):
+        # Structured content without explicit scene headings - parse as single/intro scene
+        blocks.append(("Scene 1", normalized))
+
     scenes: list[dict[str, Any]] = []
 
-    for idx, h in enumerate(headers):
-        h_line = h.group(1).strip()
-        body_start = h.end()
-        body_end = headers[idx + 1].start() if idx + 1 < len(headers) else len(normalized)
-        body = normalized[body_start:body_end].strip()
-
+    for idx, (h_line, body) in enumerate(blocks):
         # Extract explicit duration from header if present, e.g. (5.3s)
         sc_dur: float | None = None
         dur_m = re.search(r"\((\d+(?:\.\d+)?)\s*s\)", h_line, flags=re.IGNORECASE)
@@ -99,8 +106,13 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
 
         # Extract clean scene title
         title_raw = re.sub(r"\((\d+(?:\.\d+)?)\s*s\)", "", h_line, flags=re.IGNORECASE)
-        title_raw = re.sub(r"^(?:##+\s*)?(?:SCENE\s+\d+|Scene\s+\d+|\[\s*SCENE\s+\d+\s*\]|\d+\.\s*Scene\b)[:\-]?\s*", "", title_raw, flags=re.IGNORECASE)
-        sc_title = clean_markdown_inline(title_raw) or f"Scene {idx + 1}"
+        title_raw = re.sub(
+            r"^(?:##+\s*)?(?:\(?\s*(?:ACT\s+\d+.*?)?SCENE\s+\d+\s*\)?|\[\s*SCENE\s+\d+\s*\]|\d+\.\s*Scene\b)[:\-]?\s*",
+            "",
+            title_raw,
+            flags=re.IGNORECASE,
+        )
+        sc_title = clean_markdown_inline(title_raw).strip("()").strip() or f"Scene {idx + 1}"
 
         def _extract_field(field_regex: str) -> str:
             # Check bolded **FIELD:** or unbolded FIELD:

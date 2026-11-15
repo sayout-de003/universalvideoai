@@ -11,6 +11,8 @@ interface Props {
 }
 
 const STYLE_OPTIONS = [
+  { id: "anime", label: "Anime / Manga" },
+  { id: "cartoon_2d", label: "Classic 2D Cartoon" },
   { id: "pixel_art", label: "Pixel Art" },
   { id: "2d_illustrated", label: "2D Illustrated" },
   { id: "3d_stylized", label: "3D Stylized" },

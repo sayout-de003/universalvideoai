@@ -352,3 +352,75 @@ def verify_character_continuity(project_id: str, asset_id: str) -> dict[str, Any
     current_hash = compute_continuity_hash(mesh, wardrobe_spec=asset.get("wardrobe_spec") or {}, voice_id=voice_id)
     matches = current_hash == asset.get("continuity_hash")
     return {"ok": matches, "asset_id": asset_id, "expected_hash": asset.get("continuity_hash"), "current_hash": current_hash}
+
+
+def create_or_update_character(
+    project_id: str,
+    name: str,
+    role: str = "protagonist",
+    visual_description: str = "",
+    clothing: str = "",
+    facial_features: str = "",
+    body_proportions: str = "",
+    accessories: str = "",
+    personality: str = "",
+    voice_id: str = "default",
+    voice_provider: str = "edge_neural_tts",
+    reference_image_path: str | None = None,
+) -> dict[str, Any]:
+    """Create or update a high-fidelity character profile for continuity across animations and video."""
+    init_db()
+    from backend.services.document_parser import clean_markdown_inline
+    clean_name = clean_markdown_inline(name).splitlines()[0][:48].strip() or "Lead Subject"
+    clean_desc = clean_markdown_inline(visual_description)[:300] if visual_description else f"Consistent visual identity for {clean_name}"
+    clean_cloth = clean_markdown_inline(clothing)[:200] if clothing else "Signature wardrobe"
+
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT id FROM characters WHERE project_id=? AND lower(name)=lower(?)",
+            (project_id, clean_name),
+        ).fetchone()
+        if existing:
+            char_id = existing[0]
+            conn.execute(
+                """UPDATE characters SET
+                   role=?, visual_description=?, clothing=?, facial_features=?,
+                   body_proportions=?, accessories=?, personality=?, voice_id=?,
+                   voice_provider=?, reference_image_path=COALESCE(?, reference_image_path)
+                   WHERE id=?""",
+                (
+                    role, clean_desc, clean_cloth, facial_features,
+                    body_proportions, accessories, personality, voice_id,
+                    voice_provider, reference_image_path, char_id,
+                ),
+            )
+        else:
+            char_id = f"chr_{uuid.uuid4().hex[:8]}"
+            conn.execute(
+                """INSERT INTO characters
+                   (id, project_id, name, role, visual_description, facial_features,
+                    body_proportions, clothing, accessories, personality, voice_id,
+                    voice_provider, reference_image_path)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    char_id, project_id, clean_name, role, clean_desc,
+                    facial_features or "Clear distinctive silhouette and expressive eyes",
+                    body_proportions or "Balanced proportions",
+                    clean_cloth, accessories, personality or "Engaging and memorable",
+                    voice_id, voice_provider, reference_image_path,
+                ),
+            )
+        row = conn.execute("SELECT * FROM characters WHERE id=?", (char_id,)).fetchone()
+    return row_to_dict(row) or {"id": char_id, "name": clean_name}
+
+
+def get_project_characters(project_id: str) -> list[dict[str, Any]]:
+    """List all character profiles registered for a project."""
+    init_db()
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM characters WHERE project_id=? ORDER BY ROWID ASC",
+            (project_id,),
+        ).fetchall()
+    return rows_to_dicts(rows)
+

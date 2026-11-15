@@ -678,10 +678,90 @@ def api_list_characters_3d(project_id: str) -> dict[str, Any]:
     return {"project_id": project_id, "characters_3d": list_character_assets(project_id)}
 
 
+@app.get("/api/projects/{project_id}/characters")
+def api_list_characters(project_id: str) -> dict[str, Any]:
+    from backend.services.character_asset_service import get_project_characters
+    return {"project_id": project_id, "characters": get_project_characters(project_id)}
+
+
+@app.post("/api/projects/{project_id}/characters")
+def api_create_character(project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.services.character_asset_service import create_or_update_character
+    char = create_or_update_character(
+        project_id=project_id,
+        name=str(payload.get("name") or "Character"),
+        role=str(payload.get("role") or "protagonist"),
+        visual_description=str(payload.get("visual_description") or ""),
+        clothing=str(payload.get("clothing") or ""),
+        facial_features=str(payload.get("facial_features") or ""),
+        body_proportions=str(payload.get("body_proportions") or ""),
+        accessories=str(payload.get("accessories") or ""),
+        personality=str(payload.get("personality") or ""),
+        voice_id=str(payload.get("voice_id") or "default"),
+        voice_provider=str(payload.get("voice_provider") or "edge_neural_tts"),
+        reference_image_path=payload.get("reference_image_path"),
+    )
+    return {"ok": True, "project_id": project_id, "character": char}
+
+
+
 @app.get("/api/opuscar/styles")
 def api_list_opuscar_styles(category: str | None = None, query: str | None = None) -> dict[str, Any]:
     from backend.integrations.lemo_opuscar_adapter import lemo_opuscar_adapter
     return lemo_opuscar_adapter.list_styles(category=category, query=query)
+
+
+@app.get("/api/skills/animation")
+def api_list_animation_skills() -> dict[str, Any]:
+    from backend.integrations.animation_skills_adapter import animation_skills_adapter
+    return {"skills": animation_skills_adapter.list_skills()}
+
+
+@app.get("/api/skills/drawing/styles")
+def api_list_claude_drawing_styles() -> dict[str, Any]:
+    from backend.integrations.animation_skills_adapter import animation_skills_adapter
+    return {"styles": animation_skills_adapter.list_claude_drawing_styles()}
+
+
+@app.post("/api/skills/drawing/render")
+def api_render_claude_drawing(payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.integrations.animation_skills_adapter import animation_skills_adapter
+    style = str(payload.get("style", "blueprint")).strip()
+    output_path = payload.get("output_path")
+    if not output_path:
+        raise HTTPException(status_code=400, detail="output_path is required")
+    res = animation_skills_adapter.render_claude_drawing(
+        style=style,
+        output_path=output_path,
+        width=int(payload.get("width", 1200)),
+        height=int(payload.get("height", 800)),
+        seed=int(payload.get("seed", 42)),
+    )
+    if not res.get("ok"):
+        raise HTTPException(status_code=500, detail=res.get("error", "Drawing failed"))
+    return res
+
+
+@app.post("/api/skills/motion-design/review")
+def api_review_motion_design(payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.integrations.animation_skills_adapter import animation_skills_adapter
+    return animation_skills_adapter.review_motion_design(payload)
+
+
+@app.post("/api/skills/retro-collage/prompt")
+def api_compile_retro_collage_prompt(payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.integrations.animation_skills_adapter import animation_skills_adapter
+    ref = str(payload.get("reference_image", "")).strip()
+    subj = str(payload.get("subject", "")).strip()
+    act = str(payload.get("action", "")).strip()
+    if not (ref and subj and act):
+        raise HTTPException(status_code=400, detail="reference_image, subject, and action are required")
+    return animation_skills_adapter.compile_retro_collage_prompt(
+        reference_image=ref,
+        subject=subj,
+        action=act,
+        aspect_ratio=str(payload.get("aspect_ratio", "9:16")),
+    )
 
 
 @app.get("/api/opuscar/styles/{slug_or_name}")

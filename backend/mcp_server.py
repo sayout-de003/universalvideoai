@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.db import init_db
+from backend.integrations.animation_skills_adapter import animation_skills_adapter
 from backend.integrations.blender_adapter import apply_animation_and_export, render_blender_scene
 from backend.integrations.lemo_opuscar_adapter import lemo_opuscar_adapter
 from backend.models import ExportRequest, ProjectCreateRequest, SceneRegenerateRequest
@@ -24,7 +25,9 @@ from backend.orchestration.shot_orchestrator import plan_screenplay_shots, regen
 from backend.services.animated_short_film_service import build_animated_short_package, diagnose_and_repair_shot
 from backend.services.character_asset_service import (
     auto_rig_mesh,
+    create_or_update_character,
     get_default_humanoid_asset,
+    get_project_characters,
     register_character_asset,
     validate_and_cleanup_mesh,
 )
@@ -222,6 +225,58 @@ TOOLS = [
             "required": ["project_id", "variants"],
         },
     },
+    {
+        "name": "studio_list_animation_skills",
+        "description": "List all 9 integrated Claude Animation Skills (HandDraw, ClaudeAnimationBase, ClaudeDrawing, AniDoodle, MotionSkill, MotionDesign, Manim, JSAnimation, Huashu) and their capabilities.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "studio_list_claude_drawing_styles",
+        "description": "List all 83 artistic styles supported by the procedural Claude Drawing Skill (ukiyo-e, watercolor, blueprint, stained glass, etc.).",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "studio_render_claude_drawing",
+        "description": "Procedurally render a high-resolution illustration in any of the 83 Claude Drawing styles using pure CPU Pillow/numpy.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "style": {"type": "string", "description": "Style slug e.g. blueprint, artdeco, bauhaus, ukiyo-e"},
+                "output_path": {"type": "string", "description": "Absolute output image file path (.png or .jpg)"},
+                "width": {"type": "integer", "description": "Width in pixels (default 1200)"},
+                "height": {"type": "integer", "description": "Height in pixels (default 800)"},
+                "seed": {"type": "integer", "description": "Random seed for procedural variation"},
+            },
+            "required": ["style", "output_path"],
+        },
+    },
+    {
+        "name": "studio_review_motion_design",
+        "description": "Evaluate an animation plan against LottieFiles and 12 Disney animation principles (easing, timing, staging, secondary action).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "timing_sec": {"type": "number", "description": "Duration of the movement in seconds"},
+                "easing": {"type": "string", "description": "Easing curve (e.g. linear, easeInOut, easeOut)"},
+                "active_elements": {"type": "integer", "description": "Number of simultaneously moving objects"},
+            },
+            "required": ["timing_sec"],
+        },
+    },
+    {
+        "name": "studio_compile_retro_collage_prompt",
+        "description": "Compile a retro collage animation prompt package with paper-grain styling, halftone dots, and copyright redline checks.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "reference_image": {"type": "string", "description": "Reference image or description"},
+                "subject": {"type": "string", "description": "Main subject of the animation"},
+                "action": {"type": "string", "description": "Action or movement to animate"},
+                "aspect_ratio": {"type": "string", "description": "9:16 or 16:9"},
+            },
+            "required": ["reference_image", "subject", "action"],
+        },
+    },
     # ------------------------------------------------------------------
     # First-class Antigravity Production Tools (Shared Pipeline)
     # ------------------------------------------------------------------
@@ -397,6 +452,39 @@ TOOLS = [
             "required": ["production_id"],
         },
     },
+    {
+        "name": "create_production_character",
+        "description": "Create or update a consistent character profile (identity, style, wardrobe, facial features, voice) for continuity across anime, cartoon, and 3D scenes.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "production_id": {"type": "string"},
+                "name": {"type": "string"},
+                "role": {"type": "string", "description": "protagonist | antagonist | supporting | narrator"},
+                "visual_description": {"type": "string"},
+                "clothing": {"type": "string"},
+                "facial_features": {"type": "string"},
+                "body_proportions": {"type": "string"},
+                "accessories": {"type": "string"},
+                "personality": {"type": "string"},
+                "voice_id": {"type": "string"},
+                "voice_provider": {"type": "string"},
+                "reference_image_path": {"type": "string"},
+            },
+            "required": ["production_id", "name"],
+        },
+    },
+    {
+        "name": "get_production_characters",
+        "description": "List all character profiles registered for a production with their visual descriptions, wardrobe, and voice settings.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "production_id": {"type": "string"},
+            },
+            "required": ["production_id"],
+        },
+    },
 ]
 
 
@@ -471,6 +559,27 @@ def handle_tool_call(name: str, args: dict[str, Any]) -> Any:
             output_mp4=Path(args["output_mp4"]),
             fps=int(args.get("fps", 24)),
             size=str(args.get("size", "1280x720")),
+        )
+    if name == "studio_list_animation_skills":
+        return {"skills": animation_skills_adapter.list_skills()}
+    if name == "studio_list_claude_drawing_styles":
+        return {"styles": animation_skills_adapter.list_claude_drawing_styles()}
+    if name == "studio_render_claude_drawing":
+        return animation_skills_adapter.render_claude_drawing(
+            style=args["style"],
+            output_path=args["output_path"],
+            width=int(args.get("width", 1200)),
+            height=int(args.get("height", 800)),
+            seed=int(args.get("seed", 42)),
+        )
+    if name == "studio_review_motion_design":
+        return animation_skills_adapter.review_motion_design(args)
+    if name == "studio_compile_retro_collage_prompt":
+        return animation_skills_adapter.compile_retro_collage_prompt(
+            reference_image=args["reference_image"],
+            subject=args["subject"],
+            action=args["action"],
+            aspect_ratio=args.get("aspect_ratio", "9:16"),
         )
     if name == "studio_animate_short_film":
         return build_animated_short_package(
@@ -609,6 +718,27 @@ def handle_tool_call(name: str, args: dict[str, Any]) -> Any:
         out_path = ws / "exports" / f"export_{res}_{codec}.{fmt}"
         chapters = [{"title": c["title"], "duration_sec": c["target_duration_sec"]} for c in detail["chapters"]]
         return export_final_deliverable(silent_master, master_mix, out_path, chapters=chapters, fmt=fmt, codec=codec, resolution=res, fps=fps)
+    if name == "create_production_character":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        char = create_or_update_character(
+            project_id=pid,
+            name=args["name"],
+            role=str(args.get("role") or "protagonist"),
+            visual_description=str(args.get("visual_description") or ""),
+            clothing=str(args.get("clothing") or ""),
+            facial_features=str(args.get("facial_features") or ""),
+            body_proportions=str(args.get("body_proportions") or ""),
+            accessories=str(args.get("accessories") or ""),
+            personality=str(args.get("personality") or ""),
+            voice_id=str(args.get("voice_id") or "default"),
+            voice_provider=str(args.get("voice_provider") or "edge_neural_tts"),
+            reference_image_path=args.get("reference_image_path"),
+        )
+        return {"ok": True, "production_id": pid, "character": char}
+    if name == "get_production_characters":
+        pid = str(args.get("production_id") or args.get("project_id"))
+        chars = get_project_characters(pid)
+        return {"ok": True, "production_id": pid, "characters": chars}
     raise ValueError(f"Unknown tool: {name}")
 
 

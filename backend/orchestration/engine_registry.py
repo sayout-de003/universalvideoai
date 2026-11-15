@@ -82,6 +82,54 @@ VISUAL_STYLE_PROFILES: dict[str, dict[str, Any]] = {
         "render_settings": {"fps": 24, "motion_blur": False, "palette": "bold_cartoon"},
         "qa_checks": ["stream_integrity", "character_continuity", "ink_line_sharpness"],
     },
+    "whiteboard_handdraw": {
+        "id": "whiteboard_handdraw",
+        "label": "Whiteboard & Hand-Drawn Explainer",
+        "description": "Deterministic SVG path drawing, animated sketches, Edge TTS narration, and whiteboard layout.",
+        "supported_engines": ["handdraw", "remotion", "hyperframes", "ffmpeg"],
+        "default_engine": "handdraw",
+        "hyperframes_theme": "hand_drawn_storybook",
+        "asset_requirements": ["path_svg_assets", "dsl_scene_timing"],
+        "animation_techniques": ["stroke_draw_on", "pan_zoom_framing", "synchronized_narration"],
+        "render_settings": {"fps": 30, "resolution": "1920x1080"},
+        "qa_checks": ["stream_integrity", "svg_path_validity", "audio_alignment"],
+    },
+    "p5_brush_cartoon": {
+        "id": "p5_brush_cartoon",
+        "label": "Hand-Painted Cartoon (p5.brush)",
+        "description": "Handmade animated cartoon using p5.js and p5.brush: flat wash colors, ink outlines, line boil, 31 character emotions.",
+        "supported_engines": ["p5_brush", "hyperframes", "ffmpeg"],
+        "default_engine": "p5_brush",
+        "hyperframes_theme": "cartoon_2d",
+        "asset_requirements": ["clawd_model_sheet", "p5_brush_library"],
+        "animation_techniques": ["line_boil", "drawn_key_turns", "watercolor_wash_overlap"],
+        "render_settings": {"fps": 12, "boil_hz": 12},
+        "qa_checks": ["stream_integrity", "boil_cohesion", "character_acting"],
+    },
+    "claude_procedural_art": {
+        "id": "claude_procedural_art",
+        "label": "Procedural Art Illustration (83 Styles)",
+        "description": "Procedural CPU drawing in 83 styles (ukiyo-e, watercolor, blueprint, stained glass, Art Deco) using numpy + Pillow.",
+        "supported_engines": ["claude_drawing", "hyperframes", "ffmpeg"],
+        "default_engine": "claude_drawing",
+        "hyperframes_theme": "hand_drawn_storybook",
+        "asset_requirements": ["style_slug", "aspect_dimensions"],
+        "animation_techniques": ["procedural_stroke_generation", "draw_on_timelapse", "paper_texture_synthesis"],
+        "render_settings": {"fps": 24, "quality": "lossless"},
+        "qa_checks": ["stream_integrity", "palette_harmony", "resolution_match"],
+    },
+    "retro_paper_collage": {
+        "id": "retro_paper_collage",
+        "label": "Retro Paper Collage Motion",
+        "description": "High-saturation paper grain backgrounds, monochrome halftone-dot cutouts, torn labels, and stop-motion jitter.",
+        "supported_engines": ["hyperframes", "remotion", "ffmpeg"],
+        "default_engine": "hyperframes",
+        "hyperframes_theme": "pixel_art",
+        "asset_requirements": ["halftone_cutout", "paper_grain_texture"],
+        "animation_techniques": ["stop_motion_jitter", "layered_cutout_shift", "torn_label_entry"],
+        "render_settings": {"fps": 12, "aspect_ratio": "9:16"},
+        "qa_checks": ["stream_integrity", "halftone_texture", "label_legibility"],
+    },
 }
 
 
@@ -93,6 +141,14 @@ def resolve_visual_style_profile(style_or_prompt: str | None = None, fallback_pr
     combined = f"{raw} {(fallback_prompt or '').strip().lower()}".strip()
     if not combined or combined == "auto":
         return "2d_illustrated"
+    if any(k in combined for k in ("whiteboard", "handdraw", "sketch explainer")):
+        return "whiteboard_handdraw"
+    if any(k in combined for k in ("clawd", "p5.brush", "p5 brush", "hand-painted cartoon")):
+        return "p5_brush_cartoon"
+    if any(k in combined for k in ("claude drawing", "procedural art", "83 styles")):
+        return "claude_procedural_art"
+    if any(k in combined for k in ("retro collage", "paper collage", "halftone cutout")):
+        return "retro_paper_collage"
     if any(k in combined for k in ("anime", "manga", "ghibli", "shonen", "shojo", "otaku", "japanese animation", "makoto shinkai", "kyoto animation")):
         return "anime"
     if any(k in combined for k in ("cartoon", "comic", "classic cartoon", "toon", "looney", "disney 2d", "western animation", "comic book")):
@@ -227,6 +283,61 @@ def get_engine_catalog() -> dict[str, Any]:
             "max_resolution": "1920x1080",
             "cost_per_unit_usd": 0.0,
             "notes": "Native OpenToonz tcomposer detected." if has_opentoonz else "Uses deterministic 2D Illustrated Rig & Lip-Sync Canvas pipeline.",
+        },
+        {
+            "id": "handdraw",
+            "name": "HandDraw SVG & Remotion Engine",
+            "type": "local",
+            "available": has_node and has_ffmpeg,
+            "status": "READY" if (has_node and has_ffmpeg) else "UNAVAILABLE",
+            "capabilities": ["svg_path_animation", "whiteboard_draw_on", "edge_tts_narration", "remotion_render"],
+            "max_resolution": "1920x1080",
+            "cost_per_unit_usd": 0.0,
+            "notes": "Remotion + SVG + Edge TTS hand-drawn animation pipeline.",
+        },
+        {
+            "id": "p5_brush",
+            "name": "p5.brush Hand-Painted Cartoon Engine (Clawd)",
+            "type": "local",
+            "available": has_node,
+            "status": "READY" if has_node else "UNAVAILABLE",
+            "capabilities": ["hand_painted_acting", "31_character_emotions", "line_boil", "headless_puppeteer"],
+            "max_resolution": "1920x1080",
+            "cost_per_unit_usd": 0.0,
+            "notes": "p5.js + p5.brush character animation with headless frame rendering.",
+        },
+        {
+            "id": "claude_drawing",
+            "name": "Claude Drawing Engine (83 Procedural Styles)",
+            "type": "local",
+            "available": True,
+            "status": "READY",
+            "capabilities": ["83_art_styles", "numpy_pillow_cpu", "draw_on_timelapse", "lossless_art_frames"],
+            "max_resolution": "3840x2160",
+            "cost_per_unit_usd": 0.0,
+            "notes": "100% CPU procedural illustration in 83 styles with zero image models.",
+        },
+        {
+            "id": "anidoodle",
+            "name": "AniDoodle Procedural Art & Scored Film Engine",
+            "type": "local",
+            "available": has_node and has_chromium,
+            "status": "READY" if (has_node and has_chromium) else "UNAVAILABLE",
+            "capabilities": ["32_art_styles", "code_drawn_films", "web_audio_score", "deterministic_render"],
+            "max_resolution": "1920x1080",
+            "cost_per_unit_usd": 0.0,
+            "notes": "Deterministic code-drawn art and procedural scores.",
+        },
+        {
+            "id": "javascript_animation",
+            "name": "JavaScript Canvas Zero-Asset Film Engine",
+            "type": "local",
+            "available": has_node and has_chromium and has_ffmpeg,
+            "status": "READY" if (has_node and has_chromium and has_ffmpeg) else "UNAVAILABLE",
+            "capabilities": ["zero_asset_canvas", "code_synthesized_audio", "frame_accurate_mp4", "av_sync_check"],
+            "max_resolution": "1920x1080",
+            "cost_per_unit_usd": 0.0,
+            "notes": "Single-file HTML5 canvas animation with code-synthesized audio.",
         },
     ]
 
