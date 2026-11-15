@@ -447,14 +447,24 @@ def select_render_engine(
         return "ffmpeg", f"Requested engine '{preferred}' is unavailable on this host; using 'ffmpeg' archival/compositor path."
 
     style_key = resolve_visual_style_profile(visual_style) if visual_style and visual_style != "auto" else None
-    if style_key == "3d_stylized":
-        if avail.get("blender"):
-            return "blender", None
-        if avail.get("threejs"):
-            return "threejs", None
-    if style_key in ("pixel_art", "2d_illustrated", "hand_drawn_storybook"):
-        if avail.get("hyperframes"):
-            return "hyperframes", None
+    if style_key and style_key in VISUAL_STYLE_PROFILES:
+        profile = VISUAL_STYLE_PROFILES[style_key]
+        for engine_id in [profile["default_engine"], *profile.get("supported_engines", [])]:
+            if avail.get(engine_id):
+                return engine_id, None
+
+    if ("whiteboard" in lower or "handdraw" in lower) and avail.get("handdraw"):
+        return "handdraw", None
+    if ("p5.brush" in lower or "p5 brush" in lower or "clawd" in lower) and avail.get("p5_brush"):
+        return "p5_brush", None
+    if ("claude drawing" in lower or "procedural style" in lower) and avail.get("claude_drawing"):
+        return "claude_drawing", None
+    if "anidoodle" in lower and avail.get("anidoodle"):
+        return "anidoodle", None
+    if ("javascript animation" in lower or "canvas animation" in lower) and avail.get("javascript_animation"):
+        return "javascript_animation", None
+    if ("libresprite" in lower or "sprite sheet" in lower) and avail.get("libresprite"):
+        return "libresprite", None
 
     if "3d" in lower or "three.js" in lower or "blender" in lower:
         if avail.get("blender"):
@@ -468,7 +478,7 @@ def select_render_engine(
             return "manim", None
         return ("hyperframes" if avail.get("hyperframes") else "ffmpeg"), "Manim is not installed."
 
-    if category in ("animation",) or any(k in lower for k in ("cartoon", "anime", "character", "pixel", "storybook", "watercolor", "illustrated", "2d")):
+    if category in ("animation",) or any(k in lower for k in ("cartoon", "anime", "character", "pixel", "cyberpunk", "storybook", "watercolor", "illustrated", "2d")):
         if avail.get("hyperframes"):
             return "hyperframes", None
         return "ffmpeg", None

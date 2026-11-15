@@ -110,6 +110,7 @@ class ProjectCreateRequest(BaseModel):
     mode: ProductionMode = ProductionMode.AUTOMATIC
     production_mode: str | None = None
     video_format: str | None = None
+    video_formats: list[str] = Field(default_factory=list)
     video_type: str | None = None
     visual_style: str | None = None
     voice_mode: str | None = "auto"

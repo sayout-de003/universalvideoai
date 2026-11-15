@@ -107,8 +107,12 @@ def sanitize_spoken_voiceover(raw_text: str, default: str = "Silence.") -> str:
             # Screenplay field blocks
             if re.match(r"^(?:\*\*)?(?:VISUAL|CAMERA|LIGHTING|SOUND|ON-SCREEN\s+TEXT|COMPOSITION|PROPS?|LOCATION|TRANSITION|EFFECTS?|MUSIC|SFX)(?:\*\*)?\s*:", line_s, flags=re.IGNORECASE):
                 continue
-            # Sluglines and transitions
+            # Sluglines, transitions, and stage directions
             if re.match(r"^(?:EXT\.|INT\.|EST\.|FADE\s+IN|CUT\s+TO|DISSOLVE\s+TO)\b", line_s, flags=re.IGNORECASE):
+                continue
+            if re.match(r"^\(.*\)$", line_s):
+                continue
+            if re.match(r"^(?:we see|show the|cut to|camera |the camera|fade in|wide shot|close-up|close up|pan to|dolly)\b", line_s, flags=re.IGNORECASE):
                 continue
             lines.append(line_s)
         text = " ".join(lines) if lines else ""
@@ -127,6 +131,15 @@ def sanitize_spoken_voiceover(raw_text: str, default: str = "Silence.") -> str:
     # Strip timing tags like (5.3s) or [5.3s]
     text = re.sub(r"\(\s*\d+(?:\.\d+)?\s*s\s*\)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\[\s*\d+(?:\.\d+)?\s*s\s*\]", "", text, flags=re.IGNORECASE)
+
+    # 4b. Strip prompt-instruction wrappers and screenplay beat/scene meta prefixes
+    text = re.sub(
+        r"^(?:(?:please\s+)?(?:create|make|generate|write|produce|build|render)\s+(?:a|an)\s+(?:\d+\s*(?:sec|second|seconds|min|minute|minutes|s)\s+)?(?:[\w-]+\s+){0,4}?(?:video|animation|film|clip|short|reel|script|screenplay)\s+(?:of|about|on|for|showing|featuring)?\s*)+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"^(?:At\s+beat\s+\d+|In\s+(?:scene|step|phase|stage|chapter)\s+\d+)\s*[,:\-]?\s*", "", text, flags=re.IGNORECASE)
 
     # 5. Strip markdown tokens (#, *, _, `, ~, |, >)
     text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)

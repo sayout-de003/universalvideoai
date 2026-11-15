@@ -711,6 +711,135 @@ def api_list_opuscar_styles(category: str | None = None, query: str | None = Non
     return lemo_opuscar_adapter.list_styles(category=category, query=query)
 
 
+@app.get("/api/skills")
+def api_list_all_skills() -> dict[str, Any]:
+    """Return all studio core pipeline skills and Claude open-source animation skills."""
+    from backend.integrations.animation_skills_adapter import animation_skills_adapter
+    from backend.orchestration.engine_registry import get_engine_catalog
+
+    catalog = get_engine_catalog()
+    avail = {e["id"]: bool(e.get("available")) for e in catalog.get("rendering_engines", [])}
+
+    studio_skills: list[dict[str, Any]] = [
+        {
+            "id": "blender",
+            "name": "Headless Blender 3D",
+            "tagline": "Rigged 3D humanoid character, PBR lighting & custom 3D sets",
+            "category": "3d",
+            "technology": "Blender EEVEE / Cycles",
+            "installed": avail.get("blender", False),
+            "ready": avail.get("blender", False),
+            "source": "studio_core",
+            "formats": ["short_films", "animation_motion_graphics", "product_launch_films"],
+        },
+        {
+            "id": "animated-short-film",
+            "name": "Animated Short Film",
+            "tagline": "Painterly cinematic style-lock & shot-by-shot causal planning",
+            "category": "style",
+            "technology": "Causal Shot Planner + Style-Lock",
+            "installed": True,
+            "ready": True,
+            "source": "studio_core",
+            "formats": ["short_films", "fictional_storytelling"],
+        },
+        {
+            "id": "lemo-opuscar",
+            "name": "Lemo-Opuscar Code Films",
+            "tagline": "99 code-driven film aesthetics (Impasto, Watercolor, Ukiyo-e, Neon)",
+            "category": "code_art",
+            "technology": "HTML5 / Canvas / Shader",
+            "installed": True,
+            "ready": True,
+            "source": "studio_core",
+            "formats": ["animation_motion_graphics", "music_videos"],
+        },
+        {
+            "id": "anatomy",
+            "name": "Anatomy Isometric Explainer",
+            "tagline": "Isometric precision technical schematics & physical exploded teardowns",
+            "category": "3d",
+            "technology": "Isometric SVG + WebGL",
+            "installed": True,
+            "ready": True,
+            "source": "studio_core",
+            "formats": ["educational_videos", "tutorials_demos", "saas_explainers"],
+        },
+        {
+            "id": "remotion",
+            "name": "Remotion Kinetic HUD",
+            "tagline": "Code-driven motion graphics, dynamic charts & animated typography",
+            "category": "motion_graphics",
+            "technology": "React + Remotion",
+            "installed": avail.get("remotion", True),
+            "ready": avail.get("remotion", True),
+            "source": "studio_core",
+            "formats": ["saas_explainers", "advertisements", "youtube_shorts"],
+        },
+        {
+            "id": "openmontage",
+            "name": "OpenMontage Pacing",
+            "tagline": "Fast rhythmic cuts, multi-clip speed ramps & pacing",
+            "category": "pacing",
+            "technology": "OpenMontage + FFmpeg",
+            "installed": openmontage_adapter.is_available(),
+            "ready": openmontage_adapter.is_available(),
+            "source": "studio_core",
+            "formats": ["instagram_reels", "youtube_shorts", "cinematic_trailers"],
+        },
+        {
+            "id": "voicestudio",
+            "name": "VoiceStudio & OpenWhispr",
+            "tagline": "Dual neural conversational actors & word-level subtitle sync",
+            "category": "audio",
+            "technology": "Edge Neural TTS + OpenWhispr",
+            "installed": True,
+            "ready": True,
+            "source": "studio_core",
+            "formats": ["documentaries", "interviews_podcasts", "educational_videos"],
+        },
+        {
+            "id": "hyperframes",
+            "name": "HyperFrames Vector Cel",
+            "tagline": "2D character animation & multiplane depth parallax",
+            "category": "motion_graphics",
+            "technology": "SVG + Multiplane Engine",
+            "installed": avail.get("hyperframes", True),
+            "ready": avail.get("hyperframes", True),
+            "source": "studio_core",
+            "formats": ["animation_motion_graphics", "fictional_storytelling"],
+        },
+        {
+            "id": "hypit",
+            "name": "Hypit Semantic Composition",
+            "tagline": "Narrative semantic timeline alignment & adaptive beat ranking",
+            "category": "pacing",
+            "technology": "Semantic Beat Engine",
+            "installed": True,
+            "ready": True,
+            "source": "studio_core",
+            "formats": ["documentaries", "youtube_longform", "brand_films"],
+        },
+    ]
+
+    anim_skills = [
+        {
+            "id": s["id"],
+            "name": s["name"],
+            "tagline": s["description"],
+            "category": "animation",
+            "technology": s["technology"],
+            "installed": bool(s.get("installed", True)),
+            "ready": bool(s.get("ready", True)),
+            "source": "claude_animation",
+            "formats": s.get("formats", []),
+        }
+        for s in animation_skills_adapter.list_skills()
+    ]
+
+    return {"skills": studio_skills + anim_skills}
+
+
 @app.get("/api/skills/animation")
 def api_list_animation_skills() -> dict[str, Any]:
     from backend.integrations.animation_skills_adapter import animation_skills_adapter

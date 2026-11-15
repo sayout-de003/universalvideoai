@@ -26,6 +26,10 @@ SPECIALIST_PROMPTS: dict[str, str] = {
     "educational": "Write an educational screenplay with clear learning objectives, prerequisite anchoring, concrete examples, visual demonstrations, and recap.",
     "music_video": "Write a music video treatment and beat-mapped visual script with motifs, choreography/movement, and rhythmic transitions.",
     "existing_footage": "Write an edit-decision screenplay strictly grounded in the user's uploaded source media inventory.",
+    "character_animator": "Write a natural 2D character dialogue script with distinct voices, subtext, reactions, and expressive staging.",
+    "anime_action": "Write a kinetic anime action script with dynamic stances, speed-lines, dramatic pauses, and decisive clash moments.",
+    "scifi_cyberpunk": "Write an atmospheric sci-fi cyberpunk script with neon-drenched cityscapes, flying traffic, high-tech tension, and crisp narration.",
+    "pixel_art_retro": "Write a retro 16-bit pixel art story script with crisp stage progression, vivid sprites, and punchy arcade pacing.",
 }
 
 _TRANSITION_CYCLE = ("smoothleft", "dissolve", "circleopen", "smoothright")
@@ -51,7 +55,7 @@ def _extract_subject(prompt: str) -> str:
     from backend.services.document_parser import clean_markdown_inline, parse_structured_screenplay
 
     parsed = parse_structured_screenplay(prompt)
-    if parsed.get("subject") and not str(parsed["subject"]).lower().startswith("untitled"):
+    if parsed.get("is_structured") and parsed.get("subject") and not str(parsed["subject"]).lower().startswith("untitled"):
         sub = clean_markdown_inline(str(parsed["subject"]))
         # Strip prompt wrappers from parsed subject if any
         sub_cleaned = _strip_prompt_framing(sub)
@@ -64,21 +68,30 @@ def _extract_subject(prompt: str) -> str:
     s = _strip_prompt_framing(s)
     s = re.sub(r"^(?:SCREENPLAY\s*:|TITLE\s*:|SCENE\s*\d*\s*[:\-]?)\s*", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\s+", " ", s).strip().rstrip(".!?*#")
-    cleaned_first = clean_markdown_inline(first_line).strip().rstrip(".!?")
-    return clean_markdown_inline(s if len(s) >= 3 else cleaned_first)[:90] or "Cinematic Production"
+    return s[:90] if len(s) >= 3 else "an everyday conversation"
 
 
 def _strip_prompt_framing(raw: str) -> str:
     s = raw.strip()
+    from backend.services.document_parser import clean_markdown_inline
+
+    # Check for 'about ...', 'discussing ...', 'regarding ...', 'on the topic of ...'
+    m = re.search(r"\b(?:about|discussing|regarding|exploring|on the topic of)\s+([^\n.]+)", s, flags=re.IGNORECASE)
+    if m:
+        topic = m.group(1).strip()
+        topic = re.sub(r"\b(?:in|for|with)?\s*(?:2d|3d|animated|animation|video|film|a script|script)\b", "", topic, flags=re.IGNORECASE).strip()
+        cleaned_topic = clean_markdown_inline(topic)
+        if len(cleaned_topic) >= 3:
+            return cleaned_topic
+
     s = re.sub(r"^(?:i want to (?:create|make|produce)|create|make|produce|generate|build|write|tell)\s+(?:an?|the)?\s*", "", s, flags=re.IGNORECASE)
-    s = re.sub(r"^\b\d+\s*-\s*(?:second|sec|minute|min|hour|hr)s?\b\s*", "", s, flags=re.IGNORECASE)
-    s = re.sub(
-        r"^(?:(?:cinematic|historical|educational|epic|dramatic|documentary|animated|pixar|short|long-form|youtube|viral|3d|2d|sci-fi)\s+)*(?:video|film|screenplay|story|animation|explainer|reel|short|documentary)?\s*(?:about|on|for|of|regarding|exploring)?\s*",
-        "",
-        s,
-        flags=re.IGNORECASE,
-    )
-    s = re.sub(r"^(?:on|about|for|of)\s+", "", s, flags=re.IGNORECASE).strip()
+    s = re.sub(r"\b\d+\s*-?\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b(?:two\s+(?:people|characters|friends|persons)|2\s+people|people|characters)\s+talking(?:\s+to\s+each\s+other)?\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b(?:2d|3d|pixar|anime|cartoon|animated|hand-drawn|whiteboard)\s*(?:animation|video|film|short)?\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b(?:video|film|screenplay|story|animation|explainer|reel|short|documentary|script|a script)\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"^(?:on|about|for|of|with|in)\s+", "", s, flags=re.IGNORECASE).strip()
+    s = re.sub(r"\s+(?:on|about|for|of|with|in)$", "", s, flags=re.IGNORECASE).strip()
+    s = re.sub(r"\s+", " ", s).strip()
     return s
 
 
@@ -145,15 +158,10 @@ def _select_scene_animation_mode(
 ) -> tuple[str, str]:
     """Select between Pixel Art, 2D Illustrated, 3D Stylized, Hand-Drawn Storybook, Pixar 2D/3D, and Remotion data HUD."""
     vs = (visual_style or "").strip().lower()
-    if vs == "pixel_art":
-        return "hyperframes", "pixel_art"
-    if vs == "2d_illustrated":
-        return "hyperframes", "2d_illustrated"
-    if vs == "hand_drawn_storybook":
-        return "hyperframes", "hand_drawn_storybook"
-    if vs == "3d_stylized":
-        from backend.integrations.blender_adapter import get_blender_status
-        return ("blender" if get_blender_status().get("available") else "hyperframes"), "pixar_character_world"
+    from backend.orchestration.engine_registry import VISUAL_STYLE_PROFILES
+    profile = VISUAL_STYLE_PROFILES.get(vs)
+    if profile:
+        return profile["default_engine"], str(profile.get("hyperframes_theme") or vs)
 
     if wtype in ("animation_piece", "fiction_short_film"):
         return "hyperframes", "pixar_character_world"
@@ -268,7 +276,12 @@ def _build_specialist_scenes_offline(
     """Hollywood-grade, skill-driven, research-grounded scene writer with Male/Female voice casting and 2D/3D animation cues."""
     beats = fmt_spec["structure"]
     wtype = fmt_spec["writer_type"]
-    if "animation" in fmt_spec["label"].lower():
+    _preserve_wtypes = {
+        "anime_action", "scifi_cyberpunk", "pixel_art_retro", "character_animator",
+        "handdraw_explainer", "p5_cartoon_artist", "anidoodle_director",
+        "code_animator", "huashu_director", "manim_mathematician",
+    }
+    if "animation" in fmt_spec["label"].lower() and wtype not in _preserve_wtypes:
         wtype = "animation_piece"
     verified_facts = [
         c["claim_text"]
@@ -299,7 +312,7 @@ def _build_specialist_scenes_offline(
                 vis = f"Vertical 9:16 triumphant wide hero frame of {subject} with animated particle trails and a bold payoff callout."
                 shot, cam, light = "medium_wide", "eye_level", "clean_studio"
             else:
-                narr = fact_line or f"In step {i}, {s_label} turns {surface_angle} into momentum."
+                narr = fact_line or f"Even then, {s_label} turns {surface_angle} into momentum."
                 vis = f"Dynamic 2D/3D motion-graphics breakdown of {subject} illustrating {deep_mechanism}, smooth parallax layers and spring-animated metrics."
                 shot, cam, light = "medium", "eye_level", "vibrant_key"
         elif wtype in ("documentary", "historical"):
@@ -312,7 +325,7 @@ def _build_specialist_scenes_offline(
                 vis = f"Reflective dusk wide tableau over the living world of {subject}, slow crane pull-back across warm amber lights and horizon."
                 shot, cam, light = "wide", "high_angle", "twilight_ambient"
             else:
-                narr = fact_line or f"In phase {i} of {s_label}, {deep_mechanism} changed everything."
+                narr = fact_line or f"Beneath the surface of {s_label}, {deep_mechanism} changed everything."
                 vis = f"Pixar-styled 2D/3D animated scene and data-timeline overlay tracing {deep_mechanism} in {subject}, motivated side-lighting and smooth lateral dolly."
                 shot, cam, light = "medium", "low_angle", "chiaroscuro_documentary"
         elif wtype in ("commercial", "corporate_saas"):
@@ -325,7 +338,7 @@ def _build_specialist_scenes_offline(
                 vis = f"Polished animated brand showcase for {subject} with kinetic KPI rings, luminous rim lighting, and confident push-in."
                 shot, cam, light = "wide", "eye_level", "bright_brand_key"
             else:
-                narr = fact_line or f"At stage {i}, {s_label} automates {deep_mechanism} effortlessly."
+                narr = fact_line or f"In practice, {s_label} automates {deep_mechanism} effortlessly."
                 vis = f"Animated interactive workflow and metric visualization of {subject} executing {deep_mechanism}, clean accent highlights."
                 shot, cam, light = "medium", "eye_level", "bright_studio"
         elif wtype == "youtube_longform":
@@ -338,20 +351,59 @@ def _build_specialist_scenes_offline(
                 vis = f"Wide synthesis composition of {subject} with animated callout badges summarizing the complete arc."
                 shot, cam, light = "medium_wide", "eye_level", "balanced_natural"
             else:
-                narr = fact_line or f"In chapter {chapter_num}, step {i} of {s_label} reveals {deep_mechanism}."
+                narr = fact_line or f"Look closely at {s_label}, and you uncover {deep_mechanism}."
                 vis = f"Multi-layer 2D/3D animated diagram and character walkthrough of {subject} demonstrating {deep_mechanism}."
                 shot, cam, light = "medium", "eye_level", "bright_studio"
+        elif wtype == "anime_action":
+            if i == 0:
+                narr = f"Beneath a burning horizon, steel meets silence as {s_label} begins."
+                vis = f"Dynamic 2D anime wide standoff of {subject} at sunset: billowing cloaks, speed-line horizon, and blazing amber rim light."
+                shot, cam, light = "wide", "low_angle", "sunset_rim"
+            elif i == num_scenes - 1:
+                narr = f"When the dust clears, only one blade remains standing."
+                vis = f"Dramatic anime closing silhouette of {subject} against glowing embers and drifting petals."
+                shot, cam, light = "medium_wide", "low_angle", "golden_ember"
+            else:
+                narr = fact_line or f"Steel flashes through the air as {s_label} tests every ounce of resolve."
+                vis = f"High-energy 2D anime clash in {subject}: sakuga impact frames, camera whip-pan, and sparks across the frame."
+                shot, cam, light = "medium", "dutch_angle", "high_contrast_sakuga"
+        elif wtype == "scifi_cyberpunk":
+            if i == 0:
+                narr = f"Neon rain cuts through the midnight skyline of {s_label}."
+                vis = f"Cyberpunk neon skyline of {subject} with flying cars weaving between holographic towers, cyan and magenta reflections."
+                shot, cam, light = "extreme_wide", "low_angle", "cyberpunk_neon"
+            elif i == num_scenes - 1:
+                narr = f"Above the glowing towers, the city never truly sleeps."
+                vis = f"Sweeping aerial pull-back over {subject} as flying traffic streams into the neon horizon."
+                shot, cam, light = "wide", "high_angle", "neon_twilight"
+            else:
+                narr = fact_line or f"Deep inside the neon grid of {s_label}, every signal hides a secret."
+                vis = f"Street-level cyberpunk tracking shot through {subject}: rain-slicked pavement, holographic billboards, and hovering vehicles."
+                shot, cam, light = "medium", "eye_level", "magenta_cyan_neon"
+        elif wtype == "pixel_art_retro":
+            if i == 0:
+                narr = f"High above the glowing skyline, {s_label} comes alive in crisp pixels."
+                vis = f"16-bit pixel art establishing panorama of {subject}: dithered neon sky, chunky pixel sprites, and parallax city blocks."
+                shot, cam, light = "wide", "eye_level", "retro_arcade_palette"
+            elif i == num_scenes - 1:
+                narr = f"Across every glowing rooftop, the pixel frontier shines bright."
+                vis = f"Retro pixel art finale over {subject} with animated starfield, glowing windows, and arcade horizon."
+                shot, cam, light = "medium_wide", "eye_level", "pixel_twilight"
+            else:
+                narr = fact_line or f"Through neon avenues and hovering traffic, {s_label} races forward."
+                vis = f"Crisp 16-bit pixel art action view of {subject}: animated flying vehicles, pixel rain, and vibrant CRT glow."
+                shot, cam, light = "medium", "eye_level", "neon_pixel_key"
         elif wtype in ("fiction_short_film", "animation_piece"):
             if i == 0:
-                narr = f"Before the first strike fell, {s_label} launched into decisive action."
-                vis = f"Pixar-grade 2D/3D animated wide establishing shot of {subject}: expressive lead character in motion, volumetric atmosphere, warm key light against cool shadows."
+                narr = f"In the quiet breath before everything changes, {s_label} steps forward."
+                vis = f"Expressive 2D/3D animated wide establishing shot of {subject}: lead character in motion, volumetric atmosphere, warm key light against cool shadows."
                 shot, cam, light = "wide", "low_angle", "moody_practical"
             elif i == num_scenes - 1:
-                narr = f"As the final challenge settled, the lasting legacy of {s_label} was forged."
+                narr = f"As the dust settles, the story of {s_label} finds its lasting echo."
                 vis = f"Heroic resting wide composition of the protagonist inside {subject}, breathing settling, golden rim light and atmospheric particles."
                 shot, cam, light = "medium_wide", "eye_level", "soft_cinematic_key"
             else:
-                narr = fact_line or f"At beat {i}, {s_label} confronts {surface_angle} head on."
+                narr = fact_line or f"With nowhere left to turn, {s_label} confronts {surface_angle} head on."
                 vis = f"Expressive 2D/3D character acting and dynamic camera track through {subject}: articulated stride, parallax foreground/background planes, dramatic side key light."
                 shot, cam, light = "medium", "eye_level", "dramatic_side_key"
         else:
@@ -364,7 +416,7 @@ def _build_specialist_scenes_offline(
                 vis = f"Animated visual synthesis card for {subject} with kinetic metrics, character silhouette, and warm closing gradient."
                 shot, cam, light = "medium_wide", "eye_level", "balanced_natural"
             else:
-                narr = fact_line or f"At stage {i} of {s_label}, {deep_mechanism} drives the outcome."
+                narr = fact_line or f"At the core of {s_label}, {deep_mechanism} drives the outcome."
                 vis = f"Step-by-step 2D/3D animated breakdown of {subject} showing {deep_mechanism}, high-contrast callouts, and smooth lateral glide."
                 shot, cam, light = "medium", "eye_level", "bright_studio"
 
@@ -394,6 +446,93 @@ def _build_specialist_scenes_offline(
     return scenes
 
 
+def _dialogue_cast(scenes: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    """Keep the names written in the script. Do not invent a cast."""
+    generic = ("narrator", "anchor", "co-narrator", "lead voice")
+    names: list[str] = []
+    for sc in scenes:
+        name = str(sc.get("speaker_name") or "").strip()
+        if not name or any(g in name.lower() for g in generic):
+            continue
+        if name not in names:
+            names.append(name)
+    cast: dict[str, dict[str, str]] = {}
+    for index, name in enumerate(names):
+        if index % 2 == 0:
+            cast[name] = {"voice_gender": "male", "voice_id": "character_1", "speaker_name": name}
+        else:
+            cast[name] = {"voice_gender": "female", "voice_id": "character_2", "speaker_name": name}
+    return cast
+
+
+def _conversation_requested(prompt: str, format_key: str) -> bool:
+    """Return True when the prompt or format calls for a multi-character dialogue."""
+    if format_key == "character_dialogue_2d":
+        return True
+    low = prompt.lower()
+    return any(
+        k in low
+        for k in (
+            "two people talking",
+            "two characters talking",
+            "dialogue between",
+            "conversation between",
+            "talking to each other",
+        )
+    )
+
+
+def _build_conversation_scenes(
+    subject: str,
+    fmt_spec: dict[str, Any],
+    num_scenes: int,
+    words_per_scene: int,
+    visual_style: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build alternating two-character dialogue scenes with partner_name and distinct voices."""
+    topic = subject.strip() or "what matters most"
+    if re.fullmatch(r"(?:two people talking|a script|an everyday conversation)", topic, re.IGNORECASE):
+        topic = "what happened earlier today"
+    turns = [
+        ("Alex", "Maya", "male", "character_1", f"Wait, did you really look into {topic} this morning?"),
+        ("Maya", "Alex", "female", "character_2", f"I did, and honestly, {topic} is moving faster than either of us expected."),
+        ("Alex", "Maya", "male", "character_1", f"That changes everything. Where do we even start with {topic}?"),
+        ("Maya", "Alex", "female", "character_2", f"Right here, one clear step at a time, before {topic} catches everyone off guard."),
+        ("Alex", "Maya", "male", "character_1", f"Alright, I am in. Let us tackle {topic} together."),
+        ("Maya", "Alex", "female", "character_2", f"Deal. Once we share what we found on {topic}, people will actually listen."),
+    ]
+    eng, theme = _select_scene_animation_mode(0, num_scenes, fmt_spec["writer_type"], visual_style=visual_style or "2d_illustrated")
+    scenes: list[dict[str, Any]] = []
+    for i in range(max(2, num_scenes)):
+        speaker, partner, gender, voice_id, line = turns[i % len(turns)]
+        narr = _trim_to_word_budget(line, max(8, words_per_scene))
+        scenes.append({
+            "title": f"{speaker} & {partner}",
+            "purpose": "Two-character animated dialogue exchange",
+            "narration_segment": narr,
+            "visual_description": f"2D animated two-shot of {speaker} and {partner} talking expressively about {topic}; {speaker} speaks while {partner} reacts.",
+            "shot_type": "medium_two_shot" if i in (0, num_scenes - 1) else "medium_close",
+            "camera_angle": "eye_level",
+            "camera_movement": "subtle_push_in",
+            "lighting": "warm_illustrated_key",
+            "composition": "two_shot_balanced",
+            "on_screen_text": f"{speaker}: {topic[:36]}",
+            "sound_cue": "ambient_room_tone",
+            "transition": "cut" if i == 0 else _TRANSITION_CYCLE[(i - 1) % len(_TRANSITION_CYCLE)],
+            "voice_gender": gender,
+            "voice_id": voice_id,
+            "speaker_name": speaker,
+            "character_name": speaker,
+            "partner_name": partner,
+            "preferred_scene_engine": eng,
+            "animation_theme": theme,
+            "visual_style": visual_style or "2d_illustrated",
+            "silent_action_sec": 0.25,
+            "pause_sec": 0.25,
+        })
+    return scenes
+
+
 def develop_and_write_screenplay(
     prompt: str,
     format_key: str,
@@ -411,7 +550,11 @@ def develop_and_write_screenplay(
 
     fmt_spec = get_format_spec(format_key)
     parsed_script = parse_structured_screenplay(uploaded_script or prompt)
-    subject = parsed_script.get("subject") or _extract_subject(prompt)
+    subject = (
+        parsed_script.get("subject")
+        if parsed_script.get("is_structured") and parsed_script.get("subject")
+        else _extract_subject(prompt)
+    )
     target_dur = float(
         brief.get("target_duration_sec")
         or parsed_script.get("duration_sec")
@@ -419,14 +562,19 @@ def develop_and_write_screenplay(
     )
     claims = research_claims or []
 
+    source_text = uploaded_script or prompt
     if parsed_script.get("is_structured") and parsed_script.get("scenes"):
         scenes = list(parsed_script["scenes"])
         author_mode = "user_structured_screenplay"
+        dialogue_voices = _dialogue_cast(scenes)
         for i, sc in enumerate(scenes):
-            sc["narration_segment"] = sanitize_spoken_voiceover(sc.get("narration_segment", ""))
-            cast = _cast_voice_for_scene(i, len(scenes), fmt_spec["writer_type"], uploaded_script or prompt, voice_mode=voice_mode)
+            sc["narration_segment"] = sanitize_spoken_voiceover(sc.get("narration_segment", ""), default="")
+            cast = _cast_voice_for_scene(i, len(scenes), fmt_spec["writer_type"], source_text, voice_mode=voice_mode)
             eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"], visual_style=visual_style)
-            if voice_mode in ("male", "female", "dual"):
+            speaker = str(sc.get("speaker_name") or "")
+            if dialogue_voices and speaker in dialogue_voices and voice_mode not in ("male", "female"):
+                sc.update(dialogue_voices[speaker])
+            elif voice_mode in ("male", "female", "dual"):
                 sc["voice_gender"] = cast["voice_gender"]
                 sc["voice_id"] = cast["voice_id"]
                 sc["speaker_name"] = cast["speaker_name"]
@@ -434,38 +582,65 @@ def develop_and_write_screenplay(
                 sc.setdefault("voice_gender", cast["voice_gender"])
                 sc.setdefault("voice_id", cast["voice_id"])
                 sc.setdefault("speaker_name", cast["speaker_name"])
-            sc.setdefault("preferred_scene_engine", eng)
-            sc.setdefault("animation_theme", theme)
+            if visual_style and visual_style != "auto":
+                sc["preferred_scene_engine"] = eng
+                sc["animation_theme"] = theme
+                sc["visual_style"] = visual_style
+            else:
+                sc.setdefault("preferred_scene_engine", eng)
+                sc.setdefault("animation_theme", theme)
             sc.setdefault("transition", "cut" if i == 0 else _TRANSITION_CYCLE[(i - 1) % len(_TRANSITION_CYCLE)])
     else:
-        num_scenes = plan_scene_count(target_dur, float(fmt_spec.get("shot_density_sec") or 8.0))
+        density = float(fmt_spec.get("shot_density_sec") or 8.0)
+        pacing = str(brief.get("pacing") or "balanced")
+        if pacing == "fast":
+            density = min(density, 3.0)
+        elif pacing == "cinematic":
+            density = max(density, 8.0)
+        num_scenes = plan_scene_count(target_dur, density)
         per_scene_sec = max(2.5, target_dur / num_scenes)
         spoken_budget_sec = max(1.5, per_scene_sec - 0.8)
         words_per_scene = max(6, int(round((spoken_budget_sec / 60.0) * fmt_spec["wpm"])))
 
-        scenes = _try_llm_screenplay(
-            subject, fmt_spec, brief, claims, style_guide_md, num_scenes, words_per_scene, production_mode=production_mode
-        )
-        author_mode = "llm_specialist" if scenes else "hollywood_skill_architect"
-        if not scenes:
-            scenes = _build_specialist_scenes_offline(
-                subject, fmt_spec, brief, claims, num_scenes, words_per_scene, prompt=prompt, voice_mode=voice_mode
+        if _conversation_requested(prompt, format_key):
+            scenes = _build_conversation_scenes(
+                subject,
+                fmt_spec,
+                max(4, num_scenes),
+                words_per_scene,
+                visual_style=visual_style if visual_style and visual_style != "auto" else None,
             )
-            if visual_style and visual_style != "auto":
-                for i, sc in enumerate(scenes):
-                    eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"], visual_style=visual_style)
-                    sc["preferred_scene_engine"] = eng
-                    sc["animation_theme"] = theme
+            author_mode = "dialogue_script"
         else:
-            for i, sc in enumerate(scenes):
-                cast = _cast_voice_for_scene(i, len(scenes), fmt_spec["writer_type"], prompt, voice_mode=voice_mode)
-                eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"], visual_style=visual_style)
-                sc.setdefault("voice_gender", cast["voice_gender"])
-                sc.setdefault("voice_id", cast["voice_id"])
-                sc.setdefault("speaker_name", cast["speaker_name"])
-                sc.setdefault("preferred_scene_engine", eng)
-                sc.setdefault("animation_theme", theme)
-                sc.setdefault("transition", "cut" if i == 0 else _TRANSITION_CYCLE[(i - 1) % len(_TRANSITION_CYCLE)])
+            scenes = _try_llm_screenplay(
+                subject, fmt_spec, brief, claims, style_guide_md, num_scenes, words_per_scene, production_mode=production_mode
+            )
+            author_mode = "llm_specialist" if scenes else "hollywood_skill_architect"
+            if not scenes:
+                scenes = _build_specialist_scenes_offline(
+                    subject, fmt_spec, brief, claims, num_scenes, words_per_scene, prompt=prompt, voice_mode=voice_mode
+                )
+                if visual_style and visual_style != "auto":
+                    for i, sc in enumerate(scenes):
+                        eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"], visual_style=visual_style)
+                        sc["preferred_scene_engine"] = eng
+                        sc["animation_theme"] = theme
+                        sc["visual_style"] = visual_style
+            else:
+                for i, sc in enumerate(scenes):
+                    cast = _cast_voice_for_scene(i, len(scenes), fmt_spec["writer_type"], prompt, voice_mode=voice_mode)
+                    eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"], visual_style=visual_style)
+                    sc.setdefault("voice_gender", cast["voice_gender"])
+                    sc.setdefault("voice_id", cast["voice_id"])
+                    sc.setdefault("speaker_name", cast["speaker_name"])
+                    if visual_style and visual_style != "auto":
+                        sc["preferred_scene_engine"] = eng
+                        sc["animation_theme"] = theme
+                        sc["visual_style"] = visual_style
+                    else:
+                        sc.setdefault("preferred_scene_engine", eng)
+                        sc.setdefault("animation_theme", theme)
+                    sc.setdefault("transition", "cut" if i == 0 else _TRANSITION_CYCLE[(i - 1) % len(_TRANSITION_CYCLE)])
 
     # Script Doctor + Audience Retention Editor: verify runtime & tighten/expand narration to hit target tolerance
     evaluation = evaluate_screenplay(fmt_spec["format_key"], {**brief, "target_duration_sec": target_dur}, scenes, claims)

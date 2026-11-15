@@ -127,6 +127,12 @@ def _build_ken_burns_filter(
         chain.append("eq=contrast=1.06:saturation=0.92:brightness=-0.01")
     elif color_grade == "crisp_commercial":
         chain.append("eq=contrast=1.08:saturation=1.08")
+    elif color_grade == "teal_orange":
+        chain.append("eq=contrast=1.08:saturation=1.2:gamma=0.96")
+    elif color_grade == "film_noir":
+        chain.append("eq=contrast=1.25:saturation=0:brightness=-0.03")
+    elif color_grade == "vibrant_anime":
+        chain.append("eq=contrast=1.06:saturation=1.45")
     if vignette:
         chain.append("vignette=PI/5")
     if film_grain:
@@ -184,10 +190,17 @@ def ken_burns_image_to_mp4(
 
 def _grade_filters(policy: dict[str, Any]) -> list[str]:
     chain: list[str] = []
-    if policy.get("color_grade") == "warm_cinema":
+    grade = policy.get("color_grade")
+    if grade == "warm_cinema":
         chain.append("eq=contrast=1.06:saturation=0.92:brightness=-0.01")
-    elif policy.get("color_grade") == "crisp_commercial":
+    elif grade == "crisp_commercial":
         chain.append("eq=contrast=1.08:saturation=1.08")
+    elif grade == "teal_orange":
+        chain.append("eq=contrast=1.08:saturation=1.2:gamma=0.96")
+    elif grade == "film_noir":
+        chain.append("eq=contrast=1.25:saturation=0:brightness=-0.03")
+    elif grade == "vibrant_anime":
+        chain.append("eq=contrast=1.06:saturation=1.45")
     if policy.get("vignette"):
         chain.append("vignette=PI/5")
     if policy.get("film_grain"):
@@ -322,6 +335,13 @@ def generate_shot_for_scene(
     if project_id:
         try:
             with get_conn() as conn:
+                mrow = conn.execute("SELECT metadata_json FROM projects WHERE id=?", (project_id,)).fetchone()
+                if mrow and mrow[0]:
+                    chosen = json.loads(mrow[0])
+                    if chosen.get("color_grade") and not scene.get("color_grade"):
+                        scene = {**scene, "color_grade": chosen["color_grade"]}
+                    if chosen.get("blender_settings") and "blender_settings" not in scene:
+                        scene = {**scene, "blender_settings": chosen["blender_settings"]}
                 if not scene.get("visual_style"):
                     prow = conn.execute("SELECT visual_style, metadata_json FROM projects WHERE id=?", (project_id,)).fetchone()
                     if prow and prow[0] and prow[0] != "auto":
@@ -330,28 +350,44 @@ def generate_shot_for_scene(
                         meta = json.loads(prow[1])
                         if meta.get("visual_style"):
                             scene = {**scene, "visual_style": meta["visual_style"]}
-                if not scene.get("character_name"):
-                    if scene.get("character_id"):
-                        crow = conn.execute(
-                            "SELECT name, visual_description, clothing FROM characters WHERE id=?",
-                            (scene["character_id"],),
-                        ).fetchone()
-                    else:
-                        crow = conn.execute(
-                            "SELECT name, visual_description, clothing FROM characters WHERE project_id=? ORDER BY ROWID ASC LIMIT 1",
-                            (project_id,),
-                        ).fetchone()
-                    if crow:
-                        desc_parts = [crow[1]]
-                        if crow[2]:
-                            desc_parts.append(f"Wardrobe: {crow[2]}")
-                        scene = {
-                            **scene,
-                            "character_name": crow[0],
-                            "character_description": " | ".join(p for p in desc_parts if p),
-                        }
+                refs: list[str] = []
+                try:
+                    refs = json.loads(scene.get("character_refs_json") or "[]")
+                except Exception:
+                    refs = []
+                rows = conn.execute(
+                    "SELECT id, name, visual_description, clothing FROM characters WHERE project_id=? ORDER BY ROWID ASC LIMIT 2",
+                    (project_id,),
+                ).fetchall()
+                by_id = {row[0]: row for row in rows}
+                speaker_row = by_id.get(refs[0]) if refs else None
+                if speaker_row is None and rows:
+                    speaker_row = rows[0]
+                if speaker_row and not scene.get("character_name"):
+                    desc_parts = [speaker_row[2]]
+                    if speaker_row[3]:
+                        desc_parts.append(f"Wardrobe: {speaker_row[3]}")
+                    scene = {
+                        **scene,
+                        "character_name": speaker_row[1],
+                        "character_description": " | ".join(p for p in desc_parts if p),
+                    }
+                if len(rows) >= 2:
+                    partner = next((row for row in rows if speaker_row is None or row[0] != speaker_row[0]), None)
+                    if partner:
+                        scene = {**scene, "partner_name": partner[1]}
         except Exception:
             pass
+
+    user_grade = {
+        "natural": "neutral_clean",
+        "vintage_warm": "warm_cinema",
+        "teal_orange": "teal_orange",
+        "film_noir": "film_noir",
+        "vibrant_anime": "vibrant_anime",
+    }.get(str(scene.get("color_grade") or ""))
+    if user_grade:
+        policy = {**policy, "color_grade": user_grade, "vignette": user_grade in ("warm_cinema", "film_noir", "teal_orange")}
 
     if not scene.get("character_name") and project_topic:
         scene = {**scene, "character_name": project_topic}

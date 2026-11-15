@@ -58,8 +58,26 @@ export interface SkillOption {
   id: string;
   name: string;
   tagline: string;
-  category: "3d" | "code_art" | "motion_graphics" | "pacing" | "audio" | "style";
+  category: "3d" | "code_art" | "motion_graphics" | "pacing" | "audio" | "style" | "animation" | string;
+  technology?: string;
+  installed?: boolean;
+  ready?: boolean;
+  source?: "claude_animation" | "studio_core";
+  formats?: string[];
   recommendedWith?: string[];
+}
+
+export interface VideoFormatOption {
+  key: string;
+  label: string;
+  category: string;
+  writer_type: string;
+  pipeline: string;
+  aspect_ratio: string;
+  resolution: string;
+  default_duration_sec: number;
+  wpm: number;
+  structure?: string[];
 }
 
 export interface ProjectDetail {
