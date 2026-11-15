@@ -78,6 +78,7 @@ app.add_middleware(
 )
 
 
+@app.get("/health")
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     hw = detect_hardware()

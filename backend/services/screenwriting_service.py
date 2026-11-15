@@ -54,8 +54,8 @@ def _extract_subject(prompt: str) -> str:
         return str(parsed["subject"])[:80]
 
     first_line = prompt.strip().splitlines()[0] if prompt.strip() else ""
-    s = re.sub(r"^[#*\s]+", "", first_line)
-    s = re.sub(r"\*Format:.*$", "", s, flags=re.IGNORECASE).strip()
+    s = re.sub(r"^[#*\s]+(?:screenplay\s*:\s*)?", "", first_line, flags=re.IGNORECASE)
+    s = re.sub(r"\*Format:.*$", "", s, flags=re.IGNORECASE).split("*")[0].split("|")[0].strip()
     s = re.sub(
         r"^.*?\b(?:short\s+film|feature\s+film|documentary|video|film|reel|short|commercial|ad|explainer|trailer|course|story|screenplay)\s*(?::|about|on|for|of)\s*",
         "",
@@ -76,6 +76,8 @@ def _extract_subject(prompt: str) -> str:
         flags=re.IGNORECASE,
     )
     s = re.sub(r"\s+", " ", s).strip().rstrip(".!?*#")
+    if len(s.split()) > 6:
+        s = _short_subject(s, max_words=4)
     return (s if len(s) >= 3 else first_line.strip().rstrip(".!?"))[:90]
 
 

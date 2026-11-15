@@ -524,217 +524,227 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
     ws = Path(project["workspace_dir"])
     chapters, scenes, speakers = detail["chapters"], detail["scenes"], detail["speakers"]
     narrator_voice = speakers[0]["voice_id"] if speakers else "default"
-    from backend.services.screenwriting_service import _extract_subject
+    from backend.services.screenwriting_service import _extract_subject, _short_subject
     shots_by_scene = {sh["scene_id"]: sh for sh in detail.get("shots") or []}
-    project_topic = _extract_subject(project["prompt"]) or project["title"]
+    raw_subj = _extract_subject(project["prompt"])
+    project_topic = _short_subject(raw_subj, max_words=3) if raw_subj else project["title"]
     footage = [
         r["file_path"] for r in (detail.get("reference_assets") or [])
         if r.get("asset_type") == "video" and r.get("intended_role") == "existing_footage" and Path(r.get("file_path") or "").is_file()
     ]
     used_hashes: set[str] = set()
 
-    with get_conn() as conn:
-        conn.execute("UPDATE production_runs SET paused=0, status='running', updated_at=? WHERE project_id=?", (utc_now(), project_id))
-        conn.execute("UPDATE projects SET status='running', updated_at=? WHERE id=?", (utc_now(), project_id))
-
-    emit_studio_event(project_id, "production_started", {"resume": resume, "scenes": len(scenes)})
-    _save_checkpoint(project_id, ProductionStage.GENERATION.value, "running", {"total_scenes": len(scenes)})
-
-    narration_wavs, sfx_cues, scenes_with_timings = [], [], []
-    cursor_sec = 0.0
-
-    for idx, sc in enumerate(scenes):
-        with get_conn() as conn:
-            run_row = conn.execute("SELECT paused FROM production_runs WHERE project_id=? ORDER BY started_at DESC LIMIT 1", (project_id,)).fetchone()
-            if run_row and run_row["paused"]:
-                _save_checkpoint(project_id, ProductionStage.GENERATION.value, "paused", {"completed_scenes": idx})
-                return {"ok": True, "status": "paused", "completed_scenes": idx}
-
-        scene_mp4 = ws / "renders" / f"{sc['id']}.mp4"
-        scene_wav = ws / "audio" / f"{sc['id']}_narration.wav"
-
-        if not (resume and scene_mp4.exists() and scene_wav.exists() and sc.get("quality_status") == "generated"):
-            scene_voice = (
-                sc.get("provider")
-                if sc.get("provider") in ("narrator_deep", "narrator_warm", "character_1", "character_2", "male", "female")
-                else ("narrator_deep" if idx % 2 == 0 else "narrator_warm")
-            )
-            scene_engine = sc.get("render_engine") or project["render_engine"]
-            scene_style = sc.get("visual_style") or project.get("visual_style") or "2d_illustrated"
-            prod_mode_policy = project.get("production_mode_policy") or project.get("mode") or "hybrid"
-            voice_label = "Male Neural (ChristopherNeural)" if scene_voice in ("narrator_deep", "character_1", "male") else "Female Neural (AriaNeural)"
-            emit_studio_event(
-                project_id,
-                "scene_started",
-                {
-                    "scene_id": sc["id"],
-                    "index": idx + 1,
-                    "total": len(scenes),
-                    "title": sc["title"],
-                    "engine": scene_engine,
-                    "visual_style": scene_style,
-                    "voice": voice_label,
-                    "transition": sc.get("transition") or "smoothleft",
-                },
-            )
-            _log_agent_message(
-                project_id,
-                "Production Orchestrator",
-                f"Scene {idx + 1}/{len(scenes)} ({sc['title']}): Synthesizing {voice_label} voice + rendering via '{scene_engine}' (style '{scene_style}') with '{sc.get('transition') or 'smoothleft'}' transition.",
-            )
-            tts_res = generate_tts(
-                sc["narration_segment"] or sc["title"],
-                scene_wav,
-                voice_id=scene_voice,
-                language=project["language"],
-                production_mode=prod_mode_policy,
-            )
-            actual_audio_dur = float(tts_res.get("duration_sec") or sc["duration_sec"])
-            target_scene_dur = max(float(sc["duration_sec"]), actual_audio_dur + 0.4)
-            emit_studio_event(
-                project_id,
-                "tts_synthesized",
-                {
-                    "scene_id": sc["id"],
-                    "index": idx + 1,
-                    "voice": tts_res.get("voice") or voice_label,
-                    "provider": tts_res.get("provider"),
-                    "duration_sec": round(actual_audio_dur, 2),
-                },
-            )
-            shot = shots_by_scene.get(sc["id"]) or {}
-            render_res = render_scene_clip(
-                {
-                    **sc,
-                    "visual_style": scene_style,
-                    "duration_sec": target_scene_dur,
-                    "camera_movement": shot.get("camera_movement") or sc.get("camera_movement"),
-                    "lighting": shot.get("lighting") or sc.get("lighting"),
-                    "shot_type": shot.get("shot_type") or sc.get("shot_type"),
-                    "speaker_name": "Male Lead Voice" if scene_voice in ("narrator_deep", "character_1", "male") else "Female Lead Voice",
-                },
-                scene_mp4,
-                category=project["category"], resolution=project["resolution"], fps=int(project["fps"]),
-                render_engine=scene_engine,
-                project_topic=project_topic,
-                scene_index=idx,
-                excluded_sha256=used_hashes,
-                source_media=footage[idx % len(footage)] if footage else None,
-                production_mode=prod_mode_policy,
-            )
-            with get_conn() as conn:
-                v_asset_id, a_asset_id = f"ast_{uuid.uuid4().hex[:8]}", f"ast_{uuid.uuid4().hex[:8]}"
-                clip_meta = json.dumps({
-                    "source_type": render_res.get("source_type"),
-                    "provider": render_res.get("provider"),
-                    "model": render_res.get("model"),
-                    "job_id": render_res.get("job_id"),
-                    "estimated_cost_usd": render_res.get("estimated_cost_usd"),
-                    "generation_state": render_res.get("generation_state"),
-                })
-                conn.execute(
-                    "INSERT INTO assets (id, project_id, scene_id, asset_type, provider, file_path, duration_sec, license, metadata_json, created_at) VALUES (?, ?, ?, 'video', ?, ?, ?, 'generated_local', ?, ?)",
-                    (v_asset_id, project_id, sc["id"], render_res.get("provider") or render_res.get("engine_used", "ffmpeg"), str(scene_mp4), target_scene_dur, clip_meta, utc_now()),
-                )
-                conn.execute("INSERT INTO assets (id, project_id, scene_id, asset_type, provider, file_path, duration_sec, license, created_at) VALUES (?, ?, ?, 'audio', ?, ?, ?, ?, ?)", (a_asset_id, project_id, sc["id"], tts_res.get("provider", "local"), str(scene_wav), actual_audio_dur, tts_res.get("license", "generated_local"), utc_now()))
-                conn.execute("UPDATE scenes SET duration_sec=?, visual_asset_id=?, audio_asset_id=?, rendered_clip_path=?, quality_status='generated' WHERE id=?", (target_scene_dur, v_asset_id, a_asset_id, str(scene_mp4), sc["id"]))
-            sc["duration_sec"] = target_scene_dur
-            emit_studio_event(
-                project_id,
-                "scene_generated",
-                {
-                    "scene_id": sc["id"],
-                    "index": idx + 1,
-                    "total": len(scenes),
-                    "title": sc["title"],
-                    "engine_used": render_res.get("engine_used") or scene_engine,
-                    "duration_sec": round(target_scene_dur, 2),
-                },
-            )
-        else:
-            sc["duration_sec"] = max(float(sc["duration_sec"]), probe_duration(scene_wav) + 0.4)
-
-        narration_wavs.append((scene_wav, cursor_sec))
-        scenes_with_timings.append({**sc, "start_sec": cursor_sec})
-        cursor_sec += float(sc["duration_sec"])
-
-    total_dur = max(1.0, cursor_sec)
-    _save_checkpoint(project_id, ProductionStage.AUDIO_SYNC.value, "running", {"total_duration_sec": total_dur})
-    music_wav = ws / "audio" / "background_music.wav"
-    mood = "comedy" if "funny" in project["prompt"].lower() else ("cinematic" if project["category"] in ("documentary", "cinematic") else "upbeat")
-    generate_music_bed(music_wav, duration_sec=total_dur, mood=mood)
-    stems = mix_audio_stems(narration_wavs, music_wav, sfx_cues, total_dur, ws / "stems", music_volume=0.22)
-    sub_langs = project.get("subtitle_languages") or ["en"]
-    subs = generate_subtitles(scenes_with_timings, ws / "subtitles", languages=sub_langs, word_level=True)
-    _sync_timeline_from_production(project_id, scenes_with_timings)
-
-    _log_agent_message(project_id, "Sound Designer Agent", "Generated mood-matched score, dual Male/Female neural narration stems, and clean ducked master mix (zero whoosh noise at cuts).")
-    _log_agent_message(project_id, "Video Editor Agent", "Synchronized 12-track timeline with narration, music ducking, xfade transitions, and word-level captions.")
-
-    _save_checkpoint(project_id, ProductionStage.RENDERING.value, "running", {})
-    chapter_videos, chapter_meta = [], []
-    for ch in chapters:
-        ch_scenes = [s for s in scenes_with_timings if s["chapter_id"] == ch["id"]]
-        ch_mp4 = ws / "renders" / f"{ch['id']}.mp4"
-        concat_video_clips(
-            [ws / "renders" / f"{s['id']}.mp4" for s in ch_scenes],
-            ch_mp4,
-            transitions=[str(s.get("transition") or "smoothleft") for s in ch_scenes],
-        )
-        chapter_videos.append(ch_mp4)
-        chapter_meta.append({"title": ch["title"], "duration_sec": sum(float(s["duration_sec"]) for s in ch_scenes)})
-        with get_conn() as conn:
-            conn.execute("UPDATE chapters SET status='rendered', rendered_path=? WHERE id=?", (str(ch_mp4), ch["id"]))
-
-    silent_master = ws / "renders" / "master_video_only.mp4"
-    concat_video_clips(chapter_videos, silent_master)
-    final_mp4 = ws / "exports" / "final_production.mp4"
-    primary_srt = Path(subs["files"][sub_langs[0]]["srt"]) if subs["files"] else None
-    export_final_deliverable(silent_master, Path(stems["master_mix"]), final_mp4, chapters=chapter_meta, subtitle_srt=primary_srt, fmt="mp4", codec="h264", resolution=project["resolution"], fps=int(project["fps"]))
-
-    _save_checkpoint(project_id, ProductionStage.QUALITY_ASSURANCE.value, "running", {})
-    rendered_ok = sum(1 for s in scenes if (ws / "renders" / f"{s['id']}.mp4").is_file())
-    qa_report = run_qa_verification(
-        project_id, final_mp4, expected_aspect_ratio=project["aspect_ratio"], expected_fps=int(project["fps"]),
-        subtitle_paths=[Path(v["srt"]) for v in subs["files"].values()],
-        scene_count_expected=len(scenes), scene_count_rendered=rendered_ok,
-        expected_duration_sec=total_dur,
-    )
-    _log_agent_message(project_id, "Quality Assurance Agent", f"QA executed on {final_mp4.name}: {qa_report['summary']}")
-
-    (ws / "deliverables" / "production_report.json").write_text(
-        json.dumps({"project_id": project_id, "title": project["title"], "final_video": str(final_mp4), "stems": stems, "subtitles": subs["files"], "qa_report": qa_report, "chapters": chapter_meta}, indent=2),
-        encoding="utf-8",
-    )
-    (ws / "deliverables" / "final_qa_report.json").write_text(json.dumps(qa_report, indent=2), encoding="utf-8")
-    (ws / "deliverables" / "final_qa_report.md").write_text(
-        f"# Final QA Report: {project['title']}\n\n- **Passed:** {qa_report['passed']}\n- **Summary:** {qa_report['summary']}\n",
-        encoding="utf-8",
-    )
-    (ws / "deliverables" / "render_manifest.json").write_text(
-        json.dumps({"project_id": project_id, "render_engine": project["render_engine"], "resolution": project["resolution"], "fps": project["fps"], "scenes_rendered": len(scenes), "chapters": chapter_meta}, indent=2),
-        encoding="utf-8",
-    )
-    thumb_path = ws / "exports" / "thumbnail.jpg"
     try:
-        import subprocess
-        subprocess.run(["ffmpeg", "-y", "-ss", "1.0", "-i", str(final_mp4), "-vframes", "1", str(thumb_path)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-    (ws / "deliverables" / "delivery_manifest.json").write_text(
-        json.dumps({"project_id": project_id, "final_mp4": str(final_mp4), "thumbnail": str(thumb_path) if thumb_path.exists() else None, "subtitles": subs["files"], "stems": stems}, indent=2),
-        encoding="utf-8",
-    )
+        with get_conn() as conn:
+            conn.execute("UPDATE production_runs SET paused=0, status='running', updated_at=? WHERE project_id=?", (utc_now(), project_id))
+            conn.execute("UPDATE projects SET status='running', updated_at=? WHERE id=?", (utc_now(), project_id))
 
-    final_status = "completed" if qa_report["passed"] else "qa_failed"
-    _save_checkpoint(project_id, ProductionStage.DELIVERY.value, final_status, {"final_video": str(final_mp4), "qa_passed": qa_report["passed"]})
-    openmontage_adapter.write_openmontage_checkpoint(ws, "publish", final_status, {"final_video": str(final_mp4)}, human_approved=True)
-    with get_conn() as conn:
-        conn.execute("UPDATE projects SET status=?, updated_at=? WHERE id=?", (final_status, utc_now(), project_id))
-        conn.execute("UPDATE production_runs SET status=?, current_stage=?, updated_at=? WHERE project_id=?", (final_status, ProductionStage.DELIVERY.value, utc_now(), project_id))
+        emit_studio_event(project_id, "production_started", {"resume": resume, "scenes": len(scenes)})
+        _save_checkpoint(project_id, ProductionStage.GENERATION.value, "running", {"total_scenes": len(scenes)})
 
-    emit_studio_event(project_id, "production_completed", {"status": final_status, "final_video": str(final_mp4)})
-    return get_project_detail(project_id)
+        narration_wavs, sfx_cues, scenes_with_timings = [], [], []
+        cursor_sec = 0.0
+
+        for idx, sc in enumerate(scenes):
+            with get_conn() as conn:
+                run_row = conn.execute("SELECT paused FROM production_runs WHERE project_id=? ORDER BY started_at DESC LIMIT 1", (project_id,)).fetchone()
+                if run_row and run_row["paused"]:
+                    _save_checkpoint(project_id, ProductionStage.GENERATION.value, "paused", {"completed_scenes": idx})
+                    return {"ok": True, "status": "paused", "completed_scenes": idx}
+
+            scene_mp4 = ws / "renders" / f"{sc['id']}.mp4"
+            scene_wav = ws / "audio" / f"{sc['id']}_narration.wav"
+
+            if not (resume and scene_mp4.exists() and scene_wav.exists() and sc.get("quality_status") == "generated"):
+                scene_voice = (
+                    sc.get("provider")
+                    if sc.get("provider") in ("narrator_deep", "narrator_warm", "character_1", "character_2", "male", "female")
+                    else ("narrator_deep" if idx % 2 == 0 else "narrator_warm")
+                )
+                scene_engine = sc.get("render_engine") or project["render_engine"]
+                scene_style = sc.get("visual_style") or project.get("visual_style") or "2d_illustrated"
+                prod_mode_policy = project.get("production_mode_policy") or project.get("mode") or "hybrid"
+                voice_label = "Male Neural (ChristopherNeural)" if scene_voice in ("narrator_deep", "character_1", "male") else "Female Neural (AriaNeural)"
+                emit_studio_event(
+                    project_id,
+                    "scene_started",
+                    {
+                        "scene_id": sc["id"],
+                        "index": idx + 1,
+                        "total": len(scenes),
+                        "title": sc["title"],
+                        "engine": scene_engine,
+                        "visual_style": scene_style,
+                        "voice": voice_label,
+                        "transition": sc.get("transition") or "smoothleft",
+                    },
+                )
+                _log_agent_message(
+                    project_id,
+                    "Production Orchestrator",
+                    f"Scene {idx + 1}/{len(scenes)} ({sc['title']}): Synthesizing {voice_label} voice + rendering via '{scene_engine}' (style '{scene_style}') with '{sc.get('transition') or 'smoothleft'}' transition.",
+                )
+                tts_res = generate_tts(
+                    sc["narration_segment"] or sc["title"],
+                    scene_wav,
+                    voice_id=scene_voice,
+                    language=project["language"],
+                    production_mode=prod_mode_policy,
+                )
+                actual_audio_dur = float(tts_res.get("duration_sec") or sc["duration_sec"])
+                target_scene_dur = max(float(sc["duration_sec"]), actual_audio_dur + 0.4)
+                emit_studio_event(
+                    project_id,
+                    "tts_synthesized",
+                    {
+                        "scene_id": sc["id"],
+                        "index": idx + 1,
+                        "voice": tts_res.get("voice") or voice_label,
+                        "provider": tts_res.get("provider"),
+                        "duration_sec": round(actual_audio_dur, 2),
+                    },
+                )
+                shot = shots_by_scene.get(sc["id"]) or {}
+                render_res = render_scene_clip(
+                    {
+                        **sc,
+                        "visual_style": scene_style,
+                        "duration_sec": target_scene_dur,
+                        "camera_movement": shot.get("camera_movement") or sc.get("camera_movement"),
+                        "lighting": shot.get("lighting") or sc.get("lighting"),
+                        "shot_type": shot.get("shot_type") or sc.get("shot_type"),
+                        "speaker_name": "Male Lead Voice" if scene_voice in ("narrator_deep", "character_1", "male") else "Female Lead Voice",
+                    },
+                    scene_mp4,
+                    category=project["category"], resolution=project["resolution"], fps=int(project["fps"]),
+                    render_engine=scene_engine,
+                    project_topic=project_topic,
+                    scene_index=idx,
+                    excluded_sha256=used_hashes,
+                    source_media=footage[idx % len(footage)] if footage else None,
+                    production_mode=prod_mode_policy,
+                )
+                with get_conn() as conn:
+                    v_asset_id, a_asset_id = f"ast_{uuid.uuid4().hex[:8]}", f"ast_{uuid.uuid4().hex[:8]}"
+                    clip_meta = json.dumps({
+                        "source_type": render_res.get("source_type"),
+                        "provider": render_res.get("provider"),
+                        "model": render_res.get("model"),
+                        "job_id": render_res.get("job_id"),
+                        "estimated_cost_usd": render_res.get("estimated_cost_usd"),
+                        "generation_state": render_res.get("generation_state"),
+                    })
+                    conn.execute(
+                        "INSERT INTO assets (id, project_id, scene_id, asset_type, provider, file_path, duration_sec, license, metadata_json, created_at) VALUES (?, ?, ?, 'video', ?, ?, ?, 'generated_local', ?, ?)",
+                        (v_asset_id, project_id, sc["id"], render_res.get("provider") or render_res.get("engine_used", "ffmpeg"), str(scene_mp4), target_scene_dur, clip_meta, utc_now()),
+                    )
+                    conn.execute("INSERT INTO assets (id, project_id, scene_id, asset_type, provider, file_path, duration_sec, license, created_at) VALUES (?, ?, ?, 'audio', ?, ?, ?, ?, ?)", (a_asset_id, project_id, sc["id"], tts_res.get("provider", "local"), str(scene_wav), actual_audio_dur, tts_res.get("license", "generated_local"), utc_now()))
+                    conn.execute("UPDATE scenes SET duration_sec=?, visual_asset_id=?, audio_asset_id=?, rendered_clip_path=?, quality_status='generated' WHERE id=?", (target_scene_dur, v_asset_id, a_asset_id, str(scene_mp4), sc["id"]))
+                sc["duration_sec"] = target_scene_dur
+                emit_studio_event(
+                    project_id,
+                    "scene_generated",
+                    {
+                        "scene_id": sc["id"],
+                        "index": idx + 1,
+                        "total": len(scenes),
+                        "title": sc["title"],
+                        "engine_used": render_res.get("engine_used") or scene_engine,
+                        "duration_sec": round(target_scene_dur, 2),
+                    },
+                )
+            else:
+                sc["duration_sec"] = max(float(sc["duration_sec"]), probe_duration(scene_wav) + 0.4)
+
+            narration_wavs.append((scene_wav, cursor_sec))
+            scenes_with_timings.append({**sc, "start_sec": cursor_sec})
+            cursor_sec += float(sc["duration_sec"])
+
+        total_dur = max(1.0, cursor_sec)
+        _save_checkpoint(project_id, ProductionStage.AUDIO_SYNC.value, "running", {"total_duration_sec": total_dur})
+        music_wav = ws / "audio" / "background_music.wav"
+        mood = "comedy" if "funny" in project["prompt"].lower() else ("cinematic" if project["category"] in ("documentary", "cinematic") else "upbeat")
+        generate_music_bed(music_wav, duration_sec=total_dur, mood=mood)
+        stems = mix_audio_stems(narration_wavs, music_wav, sfx_cues, total_dur, ws / "stems", music_volume=0.22)
+        sub_langs = project.get("subtitle_languages") or ["en"]
+        subs = generate_subtitles(scenes_with_timings, ws / "subtitles", languages=sub_langs, word_level=True)
+        _sync_timeline_from_production(project_id, scenes_with_timings)
+
+        _log_agent_message(project_id, "Sound Designer Agent", "Generated mood-matched score, dual Male/Female neural narration stems, and clean ducked master mix (zero whoosh noise at cuts).")
+        _log_agent_message(project_id, "Video Editor Agent", "Synchronized 12-track timeline with narration, music ducking, xfade transitions, and word-level captions.")
+
+        _save_checkpoint(project_id, ProductionStage.RENDERING.value, "running", {})
+        chapter_videos, chapter_meta = [], []
+        for ch in chapters:
+            ch_scenes = [s for s in scenes_with_timings if s["chapter_id"] == ch["id"]]
+            ch_mp4 = ws / "renders" / f"{ch['id']}.mp4"
+            concat_video_clips(
+                [ws / "renders" / f"{s['id']}.mp4" for s in ch_scenes],
+                ch_mp4,
+                transitions=[str(s.get("transition") or "smoothleft") for s in ch_scenes],
+            )
+            chapter_videos.append(ch_mp4)
+            chapter_meta.append({"title": ch["title"], "duration_sec": sum(float(s["duration_sec"]) for s in ch_scenes)})
+            with get_conn() as conn:
+                conn.execute("UPDATE chapters SET status='rendered', rendered_path=? WHERE id=?", (str(ch_mp4), ch["id"]))
+
+        silent_master = ws / "renders" / "master_video_only.mp4"
+        concat_video_clips(chapter_videos, silent_master)
+        final_mp4 = ws / "exports" / "final_production.mp4"
+        primary_srt = Path(subs["files"][sub_langs[0]]["srt"]) if subs["files"] else None
+        export_final_deliverable(silent_master, Path(stems["master_mix"]), final_mp4, chapters=chapter_meta, subtitle_srt=primary_srt, fmt="mp4", codec="h264", resolution=project["resolution"], fps=int(project["fps"]))
+
+        _save_checkpoint(project_id, ProductionStage.QUALITY_ASSURANCE.value, "running", {})
+        rendered_ok = sum(1 for s in scenes if (ws / "renders" / f"{s['id']}.mp4").is_file())
+        qa_report = run_qa_verification(
+            project_id, final_mp4, expected_aspect_ratio=project["aspect_ratio"], expected_fps=int(project["fps"]),
+            subtitle_paths=[Path(v["srt"]) for v in subs["files"].values()],
+            scene_count_expected=len(scenes), scene_count_rendered=rendered_ok,
+            expected_duration_sec=total_dur,
+        )
+        _log_agent_message(project_id, "Quality Assurance Agent", f"QA executed on {final_mp4.name}: {qa_report['summary']}")
+
+        (ws / "deliverables" / "production_report.json").write_text(
+            json.dumps({"project_id": project_id, "title": project["title"], "final_video": str(final_mp4), "stems": stems, "subtitles": subs["files"], "qa_report": qa_report, "chapters": chapter_meta}, indent=2),
+            encoding="utf-8",
+        )
+        (ws / "deliverables" / "final_qa_report.json").write_text(json.dumps(qa_report, indent=2), encoding="utf-8")
+        (ws / "deliverables" / "final_qa_report.md").write_text(
+            f"# Final QA Report: {project['title']}\n\n- **Passed:** {qa_report['passed']}\n- **Summary:** {qa_report['summary']}\n",
+            encoding="utf-8",
+        )
+        (ws / "deliverables" / "render_manifest.json").write_text(
+            json.dumps({"project_id": project_id, "render_engine": project["render_engine"], "resolution": project["resolution"], "fps": project["fps"], "scenes_rendered": len(scenes), "chapters": chapter_meta}, indent=2),
+            encoding="utf-8",
+        )
+        thumb_path = ws / "exports" / "thumbnail.jpg"
+        try:
+            import subprocess
+            subprocess.run(["ffmpeg", "-y", "-ss", "1.0", "-i", str(final_mp4), "-vframes", "1", str(thumb_path)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+        (ws / "deliverables" / "delivery_manifest.json").write_text(
+            json.dumps({"project_id": project_id, "final_mp4": str(final_mp4), "thumbnail": str(thumb_path) if thumb_path.exists() else None, "subtitles": subs["files"], "stems": stems}, indent=2),
+            encoding="utf-8",
+        )
+
+        final_status = "completed" if qa_report["passed"] else "qa_failed"
+        _save_checkpoint(project_id, ProductionStage.DELIVERY.value, final_status, {"final_video": str(final_mp4), "qa_passed": qa_report["passed"]})
+        openmontage_adapter.write_openmontage_checkpoint(ws, "publish", final_status, {"final_video": str(final_mp4)}, human_approved=True)
+        with get_conn() as conn:
+            conn.execute("UPDATE projects SET status=?, updated_at=? WHERE id=?", (final_status, utc_now(), project_id))
+            conn.execute("UPDATE production_runs SET status=?, current_stage=?, updated_at=? WHERE project_id=?", (final_status, ProductionStage.DELIVERY.value, utc_now(), project_id))
+
+        emit_studio_event(project_id, "production_completed", {"status": final_status, "final_video": str(final_mp4)})
+        return get_project_detail(project_id)
+
+    except Exception as exc:
+        with get_conn() as conn:
+            conn.execute("UPDATE production_runs SET status='failed', error_message=?, updated_at=? WHERE project_id=?", (str(exc), utc_now(), project_id))
+            conn.execute("UPDATE projects SET status='error', updated_at=? WHERE id=?", (utc_now(), project_id))
+        emit_studio_event(project_id, "production_error", {"error": str(exc)})
+        _log_agent_message(project_id, "Production Supervisor", f"Production run failed: {exc}")
+        return {"ok": False, "error": str(exc), "project_id": project_id}
 
 
 def regenerate_single_scene(project_id: str, req: SceneRegenerateRequest) -> dict[str, Any]:
