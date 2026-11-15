@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Lock, MessageSquarePlus, Play, RotateCcw, Save, Upload } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Eye, Lock, MessageSquarePlus, PenLine, Play, RotateCcw, Save, Upload } from "lucide-react";
 import { studioClient } from "../api/client";
 import { humanDuration, timecode } from "../lib/progress";
 import type { ProjectDetail } from "../types/studio";
+import { MarkdownDocumentViewer } from "./MarkdownDocumentViewer";
 
 interface Props {
   project: ProjectDetail;
@@ -64,6 +65,7 @@ export function ScriptRoomView({ project, onRefresh, onStartProduction }: Props)
   const [selected, setSelected] = useState("screenplay.md");
   const [saved, setSaved] = useState(fallbackScreenplay);
   const [draft, setDraft] = useState(fallbackScreenplay);
+  const [viewMode, setViewMode] = useState<"formatted" | "edit">("formatted");
   const [note, setNote] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
@@ -283,6 +285,22 @@ export function ScriptRoomView({ project, onRefresh, onStartProduction }: Props)
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {!isJson && (
+                <div className="flex items-center rounded-lg border border-rule bg-sunken p-0.5 text-xs mr-1">
+                  <button
+                    onClick={() => setViewMode("formatted")}
+                    className={`px-2.5 py-1 rounded-md font-semibold flex items-center gap-1 transition ${viewMode === "formatted" ? "bg-panel text-ink shadow-sm" : "text-slate hover:text-ink"}`}
+                  >
+                    <Eye className="w-3.5 h-3.5" /> Formatted View
+                  </button>
+                  <button
+                    onClick={() => setViewMode("edit")}
+                    className={`px-2.5 py-1 rounded-md font-semibold flex items-center gap-1 transition ${viewMode === "edit" ? "bg-panel text-ink shadow-sm" : "text-slate hover:text-ink"}`}
+                  >
+                    <PenLine className="w-3.5 h-3.5" /> Edit Source
+                  </button>
+                </div>
+              )}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -301,13 +319,19 @@ export function ScriptRoomView({ project, onRefresh, onStartProduction }: Props)
               <button className="btn btn-primary" disabled={!dirty || busy} onClick={save}><Save className="w-4 h-4" /> Save</button>
             </div>
           </div>
-          <textarea
-            aria-label={`Edit ${niceName(selected)}`}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            spellCheck={!isJson}
-            className={`w-full min-h-[560px] block resize-y px-8 py-6 bg-panel focus:outline-none ${isJson ? "font-mono text-[12.5px] leading-relaxed" : "script-paper"}`}
-          />
+          {!isJson && viewMode === "formatted" ? (
+            <div className="min-h-[560px] bg-panel">
+              <MarkdownDocumentViewer content={draft} filename={selected} />
+            </div>
+          ) : (
+            <textarea
+              aria-label={`Edit ${niceName(selected)}`}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              spellCheck={!isJson}
+              className={`w-full min-h-[560px] block resize-y px-8 py-6 bg-panel focus:outline-none ${isJson ? "font-mono text-[12.5px] leading-relaxed" : "script-paper"}`}
+            />
+          )}
           <div className="border-t border-rule">
             <button onClick={() => setNoteOpen((v) => !v)} className="w-full px-5 py-2.5 flex items-center gap-2 text-[13px] font-semibold text-slate hover:text-ink" aria-expanded={noteOpen}>
               <MessageSquarePlus className="w-4 h-4" /> Leave a review note
