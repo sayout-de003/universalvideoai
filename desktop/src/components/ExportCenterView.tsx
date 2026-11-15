@@ -26,6 +26,7 @@ export function ExportCenterView({ project, onExport }: Props) {
   const [bitrate, setBitrate] = useState("8M");
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [exportedFile, setExportedFile] = useState<{ url: string; filename: string } | null>(null);
   const finished = p.status === "completed" || p.status === "qa_failed";
   const base = `${API_BASE}/api/projects/${p.id}`;
 
@@ -36,9 +37,12 @@ export function ExportCenterView({ project, onExport }: Props) {
   const run = async () => {
     setExporting(true);
     setResult(null);
+    setExportedFile(null);
     try {
       const res = await onExport({ format, codec, resolution, aspect_ratio: p.aspect_ratio, fps, bitrate, include_subtitles: true, include_chapters: true });
-      setResult({ ok: true, text: `Saved to ${String(res.output_path)}` });
+      const downloadUrl = typeof res.download_url === "string" ? `${API_BASE}${res.download_url}` : `${base}/media/exports/${String(res.filename || `export_${resolution}_${codec}.${format}`)}?download=true`;
+      setExportedFile({ url: downloadUrl, filename: String(res.filename || `export_${resolution}_${codec}.${format}`) });
+      setResult({ ok: true, text: `Export ready: ${String(res.output_path || res.filename || "Saved")}` });
     } catch (err) {
       setResult({ ok: false, text: `Export failed: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
@@ -76,7 +80,18 @@ export function ExportCenterView({ project, onExport }: Props) {
           </div>
         )}
         <button disabled={exporting} onClick={run} className="btn btn-primary"><Download className="w-4 h-4" /> {exporting ? "Exporting…" : `Export ${preset.label}`}</button>
-        {result && <div role={result.ok ? "status" : "alert"} className={`px-3 py-2 rounded-lg text-[13px] border break-all ${result.ok ? "bg-done-soft border-done/30 text-done" : "bg-live-soft border-live/40 text-live"}`}>{result.text}</div>}
+        {result && (
+          <div role={result.ok ? "status" : "alert"} className={`px-3 py-2.5 rounded-lg text-[13px] border break-all space-y-2 ${result.ok ? "bg-done-soft border-done/30 text-done" : "bg-live-soft border-live/40 text-live"}`}>
+            <div>{result.text}</div>
+            {result.ok && exportedFile && (
+              <div className="pt-1">
+                <a href={exportedFile.url} download={exportedFile.filename} className="btn btn-primary btn-sm inline-flex items-center gap-1.5 py-1 px-3 text-xs">
+                  <Download className="w-3.5 h-3.5" /> Download {exportedFile.filename}
+                </a>
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       <section className="space-y-3">

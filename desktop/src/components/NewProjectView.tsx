@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Check,
@@ -10,6 +10,7 @@ import {
   Layers,
   Play,
   Plus,
+  Search,
   ShieldCheck,
   Sliders,
   Sparkles,
@@ -19,6 +20,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { studioClient, type ExtractedFileResult } from "../api/client";
+import type { SkillOption, VideoFormatOption } from "../types/studio";
 
 export interface PendingRefUpload {
   file: File;
@@ -54,84 +56,61 @@ const REFERENCE_ROLES = [
   { id: "brand_reference", label: "Brand / Logo" },
 ];
 
-const SKILLS_LIST = [
-  {
-    id: "blender",
-    name: "Headless Blender 3D",
-    tagline: "Rigged 3D humanoid character, PBR lighting & custom 3D sets",
-    category: "3d",
-    icon: "box",
-  },
-  {
-    id: "animated-short-film",
-    name: "Animated Short Film",
-    tagline: "Painterly cinematic style-lock & shot-by-shot causal planning",
-    category: "style",
-    icon: "film",
-  },
-  {
-    id: "lemo-opuscar",
-    name: "Lemo-Opuscar Code Films",
-    tagline: "99 code-driven film aesthetics (Impasto, Watercolor, Ukiyo-e, Neon)",
-    category: "code_art",
-    icon: "wand",
-  },
-  {
-    id: "anatomy",
-    name: "Anatomy Isometric Explainer",
-    tagline: "Isometric precision technical schematics & physical exploded teardowns",
-    category: "3d",
-    icon: "layers",
-  },
-  {
-    id: "remotion",
-    name: "Remotion Kinetic HUD",
-    tagline: "Code-driven motion graphics, dynamic charts & animated typography",
-    category: "motion_graphics",
-    icon: "sliders",
-  },
-  {
-    id: "openmontage",
-    name: "OpenMontage Pacing",
-    tagline: "Fast rhythmic cuts, multi-clip speed ramps & pacing",
-    category: "pacing",
-    icon: "clock",
-  },
-  {
-    id: "voicestudio",
-    name: "VoiceStudio & OpenWhispr",
-    tagline: "Dual neural conversational actors & word-level subtitle sync",
-    category: "audio",
-    icon: "video",
-  },
-  {
-    id: "hyperframes",
-    name: "HyperFrames Vector Cel",
-    tagline: "2D character animation & multiplane depth parallax",
-    category: "motion_graphics",
-    icon: "film",
-  },
-  {
-    id: "hypit",
-    name: "Hypit Semantic Composition",
-    tagline: "Narrative semantic timeline alignment & adaptive beat ranking",
-    category: "pacing",
-    icon: "layers",
-  },
+const FALLBACK_SKILLS: SkillOption[] = [
+  { id: "blender", name: "Headless Blender 3D", tagline: "Rigged 3D humanoid character, PBR lighting & custom 3D sets", category: "3d", technology: "Blender EEVEE / Cycles", installed: true, ready: true, source: "studio_core" },
+  { id: "animated-short-film", name: "Animated Short Film", tagline: "Painterly cinematic style-lock & shot-by-shot causal planning", category: "style", technology: "Causal Shot Planner", installed: true, ready: true, source: "studio_core" },
+  { id: "lemo-opuscar", name: "Lemo-Opuscar Code Films", tagline: "99 code-driven film aesthetics (Impasto, Watercolor, Ukiyo-e, Neon)", category: "code_art", technology: "HTML5 / Shader", installed: true, ready: true, source: "studio_core" },
+  { id: "anatomy", name: "Anatomy Isometric Explainer", tagline: "Isometric precision technical schematics & physical exploded teardowns", category: "3d", technology: "Isometric SVG + WebGL", installed: true, ready: true, source: "studio_core" },
+  { id: "remotion", name: "Remotion Kinetic HUD", tagline: "Code-driven motion graphics, dynamic charts & animated typography", category: "motion_graphics", technology: "React + Remotion", installed: true, ready: true, source: "studio_core" },
+  { id: "openmontage", name: "OpenMontage Pacing", tagline: "Fast rhythmic cuts, multi-clip speed ramps & pacing", category: "pacing", technology: "OpenMontage + FFmpeg", installed: true, ready: true, source: "studio_core" },
+  { id: "voicestudio", name: "VoiceStudio & OpenWhispr", tagline: "Dual neural conversational actors & word-level subtitle sync", category: "audio", technology: "Edge TTS + OpenWhispr", installed: true, ready: true, source: "studio_core" },
+  { id: "hyperframes", name: "HyperFrames Vector Cel", tagline: "2D character animation & multiplane depth parallax", category: "motion_graphics", technology: "SVG + Multiplane", installed: true, ready: true, source: "studio_core" },
+  { id: "hypit", name: "Hypit Semantic Composition", tagline: "Narrative semantic timeline alignment & adaptive beat ranking", category: "pacing", technology: "Semantic Beat Engine", installed: true, ready: true, source: "studio_core" },
+  { id: "handdraw-skill", name: "HandDraw Skill", tagline: "Deterministic hand-drawn whiteboard animation via SVG, Remotion & Edge TTS", category: "animation", technology: "SVG + Remotion", installed: true, ready: true, source: "claude_animation" },
+  { id: "claude-animation-base", name: "Claude Animation Base", tagline: "Hand-painted cartoon character acting with p5.brush & Clawd (31 emotions)", category: "animation", technology: "p5.js + p5.brush", installed: true, ready: true, source: "claude_animation" },
+  { id: "claude-drawing-skill", name: "Claude Drawing Skill", tagline: "Procedural illustration in 83 artistic styles (ink wash, watercolor, ukiyo-e)", category: "animation", technology: "NumPy + Pillow CPU", installed: true, ready: true, source: "claude_animation" },
+  { id: "anidoodle", name: "AniDoodle", tagline: "Code-drawn films & interactive animations in 32 styles with acoustic scores", category: "animation", technology: "Canvas / WebGL", installed: true, ready: true, source: "claude_animation" },
+  { id: "motion-skill", name: "Motion Skill", tagline: "Retro collage animated video pipeline with paper textures & halftone cutouts", category: "animation", technology: "Prompt Compiler", installed: true, ready: true, source: "claude_animation" },
+  { id: "motion-design", name: "Motion Design Skill", tagline: "Timing, easing, choreography & 12 Disney animation principles linting", category: "animation", technology: "Motion Rules Engine", installed: true, ready: true, source: "claude_animation" },
+  { id: "manim-skill", name: "Manim Skill", tagline: "3Blue1Brown-inspired mathematical & educational animations", category: "animation", technology: "Manim CE / Python", installed: true, ready: true, source: "claude_animation" },
+  { id: "javascript-animation", name: "JavaScript Animation Skills", tagline: "Zero-asset hand-drawn canvas films with Web Audio synthesis", category: "animation", technology: "HTML5 Canvas + Web Audio", installed: true, ready: true, source: "claude_animation" },
+  { id: "huashu-art-motion", name: "Huashu Art Motion", tagline: "Artistic motion synthesis with 36 art styles & 9 explainer grammars", category: "animation", technology: "Procedural Canvas / SVG", installed: true, ready: true, source: "claude_animation" },
 ];
 
-const VIDEO_TYPES = [
-  { id: "", label: "Let AI decide (Auto-classify from prompt)" },
-  { id: "fiction_short_films", label: "Cinematic Short Film (3-Act Narrative Arc)" },
-  { id: "3d_animation", label: "3D Character & Environment Animation" },
-  { id: "technical_explainer", label: "Technical Explainer & System Anatomy" },
-  { id: "code_film", label: "Code-Driven Generative Film (Lemo-Opuscar)" },
-  { id: "saas_product_demos", label: "SaaS & Tech Product Demo" },
-  { id: "documentaries", label: "Evidence-Led Hollywood Documentary" },
-  { id: "youtube_shorts", label: "High-Retention Short / Reel / TikTok (9:16)" },
-  { id: "brand_commercials", label: "Brand Commercial / Advertisement" },
-  { id: "educational_videos", label: "Educational Course & Concept Explainer" },
-  { id: "music_videos", label: "Beat-Mapped Music Video Experience" },
+const FALLBACK_FORMATS: VideoFormatOption[] = [
+  { key: "instagram_reels", label: "Instagram Reels", category: "social_media", writer_type: "short_form", pipeline: "short-form", aspect_ratio: "9:16", resolution: "1080x1920", default_duration_sec: 30, wpm: 165 },
+  { key: "instagram_stories", label: "Instagram Stories", category: "social_media", writer_type: "short_form", pipeline: "short-form", aspect_ratio: "9:16", resolution: "1080x1920", default_duration_sec: 15, wpm: 160 },
+  { key: "youtube_shorts", label: "YouTube Shorts", category: "social_media", writer_type: "short_form", pipeline: "short-form", aspect_ratio: "9:16", resolution: "1080x1920", default_duration_sec: 45, wpm: 170 },
+  { key: "youtube_longform", label: "YouTube Long-Form", category: "educational", writer_type: "documentary", pipeline: "documentary", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 300, wpm: 150 },
+  { key: "cinematic_trailers", label: "Cinematic Trailers", category: "cinematic", writer_type: "fiction", pipeline: "cinematic", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 60, wpm: 120 },
+  { key: "short_films", label: "Short Films", category: "cinematic", writer_type: "fiction", pipeline: "cinematic", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 180, wpm: 130 },
+  { key: "feature_films", label: "Feature-Length Films", category: "cinematic", writer_type: "fiction", pipeline: "cinematic", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 600, wpm: 130 },
+  { key: "documentaries", label: "Documentaries", category: "documentary", writer_type: "documentary", pipeline: "documentary", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 180, wpm: 145 },
+  { key: "historical_documentaries", label: "Historical Documentaries", category: "documentary", writer_type: "documentary", pipeline: "documentary", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 240, wpm: 140 },
+  { key: "investigative_documentaries", label: "Investigative Documentaries", category: "documentary", writer_type: "documentary", pipeline: "documentary", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 240, wpm: 145 },
+  { key: "advertisements", label: "Advertisements & Commercials", category: "commercial", writer_type: "commercial", pipeline: "commercial", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 30, wpm: 155 },
+  { key: "product_launch_films", label: "Product Launch Films", category: "commercial", writer_type: "commercial", pipeline: "commercial", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 60, wpm: 150 },
+  { key: "corporate_films", label: "Corporate Films", category: "commercial", writer_type: "commercial", pipeline: "commercial", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 90, wpm: 145 },
+  { key: "brand_films", label: "Brand Films", category: "commercial", writer_type: "commercial", pipeline: "commercial", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 90, wpm: 135 },
+  { key: "saas_explainers", label: "SaaS & Software Explainers", category: "educational", writer_type: "commercial", pipeline: "animated-explainer", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 75, wpm: 155 },
+  { key: "educational_videos", label: "Educational Videos", category: "educational", writer_type: "documentary", pipeline: "animated-explainer", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 120, wpm: 145 },
+  { key: "tutorials_demos", label: "Tutorials & Demonstrations", category: "educational", writer_type: "commercial", pipeline: "animated-explainer", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 120, wpm: 145 },
+  { key: "interviews_podcasts", label: "Interviews & Podcasts", category: "audio_led", writer_type: "documentary", pipeline: "podcast-repurpose", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 180, wpm: 155 },
+  { key: "music_videos", label: "Music Videos", category: "music_video", writer_type: "fiction", pipeline: "music-video", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 150, wpm: 110 },
+  { key: "animation_motion_graphics", label: "Animation & Motion Graphics", category: "animation", writer_type: "fiction", pipeline: "animated-explainer", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 60, wpm: 145 },
+  { key: "fictional_storytelling", label: "Fictional Storytelling", category: "cinematic", writer_type: "fiction", pipeline: "cinematic", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 120, wpm: 135 },
+  { key: "travel_films", label: "Travel Films", category: "documentary", writer_type: "documentary", pipeline: "documentary", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 120, wpm: 130 },
+  { key: "news_explainers", label: "News & Current-Affairs Explainers", category: "documentary", writer_type: "documentary", pipeline: "news-explainer", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 90, wpm: 160 },
+  { key: "user_footage_editing", label: "User-Footage-Based Editing", category: "custom", writer_type: "documentary", pipeline: "hybrid", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 90, wpm: 145 },
+  { key: "hybrid_live_ai", label: "Hybrid Live-Action & AI Productions", category: "custom", writer_type: "fiction", pipeline: "hybrid", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 90, wpm: 140 },
+  { key: "handdrawn_whiteboard", label: "Hand-Drawn Whiteboard Explainer", category: "animation", writer_type: "handdrawn_explainer", pipeline: "handdraw-svg", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 60, wpm: 150 },
+  { key: "character_p5_cartoon", label: "Hand-Painted Cartoon (p5.brush Clawd)", category: "animation", writer_type: "fiction", pipeline: "p5-brush-cartoon", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 45, wpm: 135 },
+  { key: "procedural_art_drawing", label: "Procedural Art Drawing (83 Styles)", category: "animation", writer_type: "documentary", pipeline: "claude-drawing", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 45, wpm: 140 },
+  { key: "anidoodle_code_film", label: "AniDoodle Code Art Film", category: "animation", writer_type: "fiction", pipeline: "anidoodle", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 60, wpm: 130 },
+  { key: "retro_collage_motion", label: "Retro Collage Animated Motion", category: "animation", writer_type: "short_form", pipeline: "motion-skill-collage", aspect_ratio: "9:16", resolution: "1080x1920", default_duration_sec: 30, wpm: 155 },
+  { key: "manim_math_explainer", label: "Manim Mathematical Animation (3Blue1Brown)", category: "educational", writer_type: "documentary", pipeline: "manim-ce", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 90, wpm: 140 },
+  { key: "javascript_canvas_story", label: "JavaScript Canvas Zero-Asset Film", category: "animation", writer_type: "fiction", pipeline: "js-canvas-film", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 60, wpm: 135 },
+  { key: "huashu_art_motion", label: "Huashu Artistic Motion", category: "animation", writer_type: "documentary", pipeline: "huashu-motion", aspect_ratio: "16:9", resolution: "1920x1080", default_duration_sec: 60, wpm: 140 },
 ];
 
 const BLENDER_ENGINES = [
@@ -238,11 +217,32 @@ const ENGINES = [
 export function NewProjectView({ onCreate }: Props) {
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [videoType, setVideoType] = useState("");
+  const [availableFormats, setAvailableFormats] = useState<VideoFormatOption[]>(FALLBACK_FORMATS);
+  const [availableSkills, setAvailableSkills] = useState<SkillOption[]>(FALLBACK_SKILLS);
+  const [selectedFormats, setSelectedFormats] = useState<string[]>([]);
+  const [formatCategoryFilter, setFormatCategoryFilter] = useState<string>("all");
+  const [formatSearch, setFormatSearch] = useState("");
+  const [skillFilter, setSkillFilter] = useState<string>("all");
+  const [skillSearch, setSkillSearch] = useState("");
   const [visualStyle, setVisualStyle] = useState("");
   const [productionMode, setProductionMode] = useState<"free_open_source" | "hybrid" | "professional">("free_open_source");
   const [voiceMode, setVoiceMode] = useState("auto");
   const [shape, setShape] = useState(SHAPES[0]);
+
+  useEffect(() => {
+    let active = true;
+    studioClient.listFormats().then((res) => {
+      if (active && Array.isArray(res.formats) && res.formats.length > 0) {
+        setAvailableFormats(res.formats);
+      }
+    }).catch(() => {});
+    studioClient.listSkills().then((res) => {
+      if (active && Array.isArray(res.skills) && res.skills.length > 0) {
+        setAvailableSkills(res.skills);
+      }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   // Duration & Pacing
   const [lengthSec, setLengthSec] = useState("");
@@ -290,12 +290,46 @@ export function NewProjectView({ onCreate }: Props) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const refMediaInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Toggle video formats in multi-select
+  const toggleFormat = (formatKey: string) => {
+    setSelectedFormats((prev) =>
+      prev.includes(formatKey) ? prev.filter((f) => f !== formatKey) : [...prev, formatKey]
+    );
+  };
+
   // Toggle skills in multi-select
   const toggleSkill = (skillId: string) => {
     setSelectedSkills((prev) =>
       prev.includes(skillId) ? prev.filter((s) => s !== skillId) : [...prev, skillId]
     );
   };
+
+  const formatCategories = useMemo(() => {
+    const cats = Array.from(new Set(availableFormats.map((f) => f.category)));
+    return ["all", ...cats];
+  }, [availableFormats]);
+
+  const filteredFormats = useMemo(() => {
+    const q = formatSearch.trim().toLowerCase();
+    return availableFormats.filter((f) => {
+      const catOk = formatCategoryFilter === "all" || f.category === formatCategoryFilter;
+      const qOk = !q || f.label.toLowerCase().includes(q) || f.key.toLowerCase().includes(q) || f.category.toLowerCase().includes(q) || (f.pipeline || "").toLowerCase().includes(q);
+      return catOk && qOk;
+    });
+  }, [availableFormats, formatCategoryFilter, formatSearch]);
+
+  const filteredSkills = useMemo(() => {
+    const q = skillSearch.trim().toLowerCase();
+    return availableSkills.filter((s) => {
+      const filterOk =
+        skillFilter === "all" ||
+        (skillFilter === "claude_animation" && s.source === "claude_animation") ||
+        (skillFilter === "studio_core" && s.source === "studio_core") ||
+        s.category === skillFilter;
+      const qOk = !q || s.name.toLowerCase().includes(q) || s.tagline.toLowerCase().includes(q) || (s.technology || "").toLowerCase().includes(q) || s.id.toLowerCase().includes(q);
+      return filterOk && qOk;
+    });
+  }, [availableSkills, skillFilter, skillSearch]);
 
   // Sync custom duration input
   const handleDurationChange = (val: string, unit: "sec" | "min") => {
@@ -363,8 +397,9 @@ export function NewProjectView({ onCreate }: Props) {
         prompt: effectivePrompt,
         production_mode: productionMode,
         preferences: {
-          video_format: videoType || undefined,
-          video_type: videoType || undefined,
+          video_format: selectedFormats[0] || undefined,
+          video_formats: selectedFormats.length > 0 ? selectedFormats : undefined,
+          video_type: selectedFormats[0] || undefined,
           visual_style: visualStyle || undefined,
           target_duration_sec: lengthSec ? Number(lengthSec) : undefined,
           skills: selectedSkills,
@@ -450,8 +485,9 @@ export function NewProjectView({ onCreate }: Props) {
           prompt: effectivePrompt,
           mode,
           production_mode: productionMode,
-          video_format: videoType || null,
-          video_type: videoType || null,
+          video_format: selectedFormats[0] || null,
+          video_formats: selectedFormats,
+          video_type: selectedFormats[0] || null,
           visual_style: visualStyle || null,
           voice_mode: voiceMode || "auto",
           aspect_ratio: shape.id,
@@ -463,7 +499,7 @@ export function NewProjectView({ onCreate }: Props) {
           uploaded_script: uploadedScript.trim() || null,
           reference_video_url: refUrl.trim() || null,
           references: allRefs,
-          preferred_render_engine: engine || (selectedSkills.includes("blender") ? "blender" : null),
+          preferred_render_engine: engine || null,
           skills: selectedSkills,
           blender_settings: {
             engine: blenderEngine,
@@ -570,24 +606,80 @@ export function NewProjectView({ onCreate }: Props) {
         </div>
 
         {/* Multi-Skill Orchestration Matrix */}
-        <fieldset className="space-y-2">
-          <div className="flex items-center justify-between">
+        <fieldset className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <legend className="label flex items-center gap-2">
-              <Layers className="w-4 h-4 text-ink" /> AI Production Skills & Engines (Multi-Select: choose one or more)
+              <Layers className="w-4 h-4 text-ink" /> AI Production Skills & Animation Suite ({availableSkills.length} Available — Multi-Select)
             </legend>
-            <div className="text-xs text-slate font-medium">
-              <span className="chip text-[11px] font-mono mr-1.5">{selectedSkills.length} selected</span>
+            <div className="flex items-center gap-2 text-xs text-slate font-medium">
+              <span className="chip text-[11px] font-mono">{selectedSkills.length} selected</span>
               <button
                 type="button"
-                onClick={() => setSelectedSkills(selectedSkills.length === SKILLS_LIST.length ? ["blender"] : SKILLS_LIST.map((s) => s.id))}
+                onClick={() => {
+                  const visibleIds = filteredSkills.map((s) => s.id);
+                  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedSkills.includes(id));
+                  if (allVisibleSelected) {
+                    setSelectedSkills((prev) => prev.filter((id) => !visibleIds.includes(id)));
+                  } else {
+                    setSelectedSkills((prev) => Array.from(new Set([...prev, ...visibleIds])));
+                  }
+                }}
                 className="text-xs text-accent hover:underline"
               >
-                {selectedSkills.length === SKILLS_LIST.length ? "Deselect All" : "Select All"}
+                {filteredSkills.length > 0 && filteredSkills.every((s) => selectedSkills.includes(s.id)) ? "Deselect Visible" : "Select All Visible"}
               </button>
+              <button
+                type="button"
+                onClick={() => setSelectedSkills(["blender", "remotion"])}
+                className="text-xs text-slate hover:text-ink hover:underline"
+              >
+                Recommended
+              </button>
+              {selectedSkills.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedSkills([])}
+                  className="text-xs text-slate hover:text-ink hover:underline"
+                >
+                  Clear
+                </button>
+              )}
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-            {SKILLS_LIST.map((skill) => {
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { id: "all", label: `All (${availableSkills.length})` },
+                { id: "claude_animation", label: `Claude Animation (${availableSkills.filter((s) => s.source === "claude_animation").length})` },
+                { id: "studio_core", label: `Studio Core & 3D (${availableSkills.filter((s) => s.source === "studio_core").length})` },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setSkillFilter(tab.id)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                    skillFilter === tab.id ? "bg-ink text-white border-ink" : "bg-panel text-slate border-rule hover:border-ink/50"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="relative min-w-[200px]">
+              <Search className="w-3.5 h-3.5 text-mute absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={skillSearch}
+                onChange={(e) => setSkillSearch(e.target.value)}
+                placeholder="Filter skills..."
+                className="field py-1 pl-8 pr-2.5 text-xs"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 max-h-[340px] overflow-y-auto pr-1">
+            {filteredSkills.map((skill) => {
               const active = selectedSkills.includes(skill.id);
               return (
                 <button
@@ -595,24 +687,35 @@ export function NewProjectView({ onCreate }: Props) {
                   type="button"
                   onClick={() => toggleSkill(skill.id)}
                   aria-pressed={active}
-                  className={`text-left rounded-lg border p-3 transition-all relative ${
+                  className={`text-left rounded-lg border p-3 transition-all relative flex flex-col justify-between ${
                     active ? "border-ink bg-ink text-white shadow-sm" : "border-rule bg-panel hover:border-ink/50"
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-[13px] flex items-center gap-1.5">
-                      {skill.name}
-                    </span>
-                    <span
-                      className={`w-4 h-4 rounded flex items-center justify-center border text-[10px] ${
-                        active ? "border-white bg-white text-ink font-bold" : "border-rule text-transparent"
-                      }`}
-                    >
-                      ✓
-                    </span>
+                  <div>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-semibold text-[13px] leading-snug">
+                        {skill.name}
+                      </span>
+                      <span
+                        className={`w-4 h-4 shrink-0 rounded flex items-center justify-center border text-[10px] ${
+                          active ? "border-white bg-white text-ink font-bold" : "border-rule text-transparent"
+                        }`}
+                      >
+                        ✓
+                      </span>
+                    </div>
+                    <div className={`text-xs mt-1 leading-snug line-clamp-2 ${active ? "text-[#c2cbd4]" : "text-mute"}`}>
+                      {skill.tagline}
+                    </div>
                   </div>
-                  <div className={`text-xs mt-1 leading-snug line-clamp-2 ${active ? "text-[#c2cbd4]" : "text-mute"}`}>
-                    {skill.tagline}
+                  <div className="flex items-center justify-between gap-1.5 mt-2.5 pt-2 border-t border-current/10 text-[10px]">
+                    <span className={`font-mono truncate ${active ? "text-[#d5dce3]" : "text-slate"}`}>
+                      {skill.technology || skill.category}
+                    </span>
+                    <span className={`shrink-0 flex items-center gap-1 font-medium ${active ? "text-emerald-300" : skill.ready !== false ? "text-done" : "text-mute"}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${skill.ready !== false ? "bg-emerald-400" : "bg-slate-400"}`} />
+                      {skill.ready !== false ? "Ready" : "Optional"}
+                    </span>
                   </div>
                 </button>
               );
@@ -730,22 +833,112 @@ export function NewProjectView({ onCreate }: Props) {
           </div>
         )}
 
-        {/* Video Type / Category Selector */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label htmlFor="videoType" className="label flex items-center gap-1.5">
-              <Film className="w-3.5 h-3.5 text-ink" /> Type of Video
-            </label>
-            <select id="videoType" className="field" value={videoType} onChange={(e) => setVideoType(e.target.value)}>
-              {VIDEO_TYPES.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
-            </select>
+        {/* Video Creation Types / Formats (Multi-Select) */}
+        <fieldset className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <legend className="label flex items-center gap-1.5">
+              <Film className="w-4 h-4 text-ink" /> Video Creation Types & Formats ({availableFormats.length} Available — Multi-Select)
+            </legend>
+            <div className="flex items-center gap-2 text-xs text-slate font-medium">
+              <span className="chip text-[11px] font-mono">
+                {selectedFormats.length === 0 ? "Auto (AI Decides)" : `${selectedFormats.length} selected`}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const visibleKeys = filteredFormats.map((f) => f.key);
+                  const allVisibleSelected = visibleKeys.length > 0 && visibleKeys.every((k) => selectedFormats.includes(k));
+                  if (allVisibleSelected) {
+                    setSelectedFormats((prev) => prev.filter((k) => !visibleKeys.includes(k)));
+                  } else {
+                    setSelectedFormats((prev) => Array.from(new Set([...prev, ...visibleKeys])));
+                  }
+                }}
+                className="text-xs text-accent hover:underline"
+              >
+                {filteredFormats.length > 0 && filteredFormats.every((f) => selectedFormats.includes(f.key)) ? "Deselect Visible" : "Select All Visible"}
+              </button>
+              {selectedFormats.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedFormats([])}
+                  className="text-xs text-slate hover:text-ink hover:underline"
+                >
+                  Let AI Decide
+                </button>
+              )}
+            </div>
           </div>
-          <div>
-            <label htmlFor="voice" className="label">Human voice casting</label>
-            <select id="voice" className="field" value={voiceMode} onChange={(e) => setVoiceMode(e.target.value)}>
-              {VOICES.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-            </select>
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-1.5">
+              {formatCategories.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setFormatCategoryFilter(cat)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors capitalize ${
+                    formatCategoryFilter === cat ? "bg-ink text-white border-ink" : "bg-panel text-slate border-rule hover:border-ink/50"
+                  }`}
+                >
+                  {cat.replace(/_/g, " ")}
+                </button>
+              ))}
+            </div>
+            <div className="relative min-w-[200px]">
+              <Search className="w-3.5 h-3.5 text-mute absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={formatSearch}
+                onChange={(e) => setFormatSearch(e.target.value)}
+                placeholder="Search video types..."
+                className="field py-1 pl-8 pr-2.5 text-xs"
+              />
+            </div>
           </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-[300px] overflow-y-auto pr-1">
+            {filteredFormats.map((fmt) => {
+              const active = selectedFormats.includes(fmt.key);
+              return (
+                <button
+                  key={fmt.key}
+                  type="button"
+                  onClick={() => toggleFormat(fmt.key)}
+                  aria-pressed={active}
+                  className={`text-left rounded-lg border px-3 py-2.5 transition-all flex flex-col justify-between ${
+                    active ? "border-ink bg-ink text-white shadow-sm" : "border-rule bg-panel hover:border-ink/50"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-semibold text-[13px] leading-snug">{fmt.label}</span>
+                    <span
+                      className={`w-4 h-4 shrink-0 rounded flex items-center justify-center border text-[10px] ${
+                        active ? "border-white bg-white text-ink font-bold" : "border-rule text-transparent"
+                      }`}
+                    >
+                      ✓
+                    </span>
+                  </div>
+                  <div className={`flex items-center gap-2 mt-2 text-[10px] font-mono ${active ? "text-[#c2cbd4]" : "text-mute"}`}>
+                    <span className="capitalize">{fmt.category.replace(/_/g, " ")}</span>
+                    <span>·</span>
+                    <span>{fmt.aspect_ratio}</span>
+                    <span>·</span>
+                    <span>{fmt.default_duration_sec}s</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        {/* Human Voice Casting */}
+        <div>
+          <label htmlFor="voice" className="label">Human voice casting</label>
+          <select id="voice" className="field" value={voiceMode} onChange={(e) => setVoiceMode(e.target.value)}>
+            {VOICES.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+          </select>
         </div>
 
         {/* Visual Style */}

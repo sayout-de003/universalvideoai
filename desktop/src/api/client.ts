@@ -1,4 +1,4 @@
-import type { HealthResponse, ProjectDetail, ProjectSummary } from "../types/studio";
+import type { HealthResponse, ProjectDetail, ProjectSummary, SkillOption, VideoFormatOption } from "../types/studio";
 
 export const API_BASE =
   import.meta.env.VITE_API_BASE ||
@@ -52,7 +52,8 @@ export const studioClient = {
   timelineRedo: (id: string) => req<Record<string, unknown>>(`/api/projects/${id}/timeline/redo`, { method: "POST" }),
   exportProject: (id: string, body: Record<string, unknown>) => req<Record<string, unknown>>(`/api/projects/${id}/export`, { method: "POST", body: JSON.stringify(body) }),
   voiceCommand: (transcript: string, projectId?: string, confirmed = false) => req<Record<string, unknown>>("/api/voice/command", { method: "POST", body: JSON.stringify({ transcript, project_id: projectId, confirmed }) }),
-  listFormats: () => req<{ formats: Array<Record<string, unknown>> }>("/api/formats"),
+  listFormats: () => req<{ formats: VideoFormatOption[] }>("/api/formats"),
+  listSkills: () => req<{ skills: SkillOption[] }>("/api/skills"),
   interpretPrompt: (body: Record<string, unknown>) => req<Record<string, unknown>>("/api/intake/interpret", { method: "POST", body: JSON.stringify(body) }),
   startIntake: (prompt: string) => req<Record<string, unknown>>("/api/intake/start", { method: "POST", body: JSON.stringify({ prompt }) }),
   answerIntake: (id: string, answers: Record<string, unknown>) => req<Record<string, unknown>>(`/api/intake/${id}/answer`, { method: "POST", body: JSON.stringify(answers) }),

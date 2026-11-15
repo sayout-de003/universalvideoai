@@ -279,18 +279,69 @@ def export_final_deliverable(
     bitrate: str = "8M",
 ) -> dict[str, Any]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    fmt_lower = fmt.lower().strip()
+    codec_lower = codec.lower().strip()
+
+    # Handle audio-only export formats cleanly
+    if fmt_lower in ("mp3", "wav", "m4a", "flac") or codec_lower == "audio":
+        cmd = ["ffmpeg", "-y", "-i", str(audio_wav), "-vn"]
+        if fmt_lower == "mp3":
+            cmd.extend(["-c:a", "libmp3lame", "-b:a", bitrate if bitrate.endswith("k") else "192k"])
+        elif fmt_lower == "wav":
+            cmd.extend(["-c:a", "pcm_s16le"])
+        elif fmt_lower == "m4a":
+            cmd.extend(["-c:a", "aac", "-b:a", bitrate if bitrate.endswith("k") else "192k"])
+        elif fmt_lower == "flac":
+            cmd.extend(["-c:a", "flac"])
+        else:
+            cmd.extend(["-c:a", "libmp3lame", "-b:a", "192k"])
+        cmd.append(str(output_path))
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {
+            "ok": True,
+            "success": True,
+            "path": str(output_path),
+            "output_path": str(output_path),
+            "format": fmt_lower,
+            "codec": "audio",
+            "resolution": "audio_only",
+            "captions_burned": False,
+        }
+
     width, height = _parse_res(resolution)
-    vcodec = "libx265" if codec == "h265" else ("prores_ks" if fmt == "mov" else "libx264")
     cmd = ["ffmpeg", "-y", "-i", str(video_mp4), "-i", str(audio_wav)]
-    cmd.extend([
-        "-vf",
-        f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv420p",
-        "-c:v", vcodec, "-b:v", bitrate,
-        "-c:a", "aac", "-b:a", "192k",
-        "-movflags", "+faststart",
-        "-shortest",
-        str(output_path),
-    ])
+
+    # Determine codecs and container flags by format
+    if fmt_lower == "webm" or codec_lower == "vp9":
+        cmd.extend([
+            "-vf",
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={fps}",
+            "-c:v", "libvpx-vp9", "-b:v", bitrate,
+            "-c:a", "libopus", "-b:a", "128k",
+            "-shortest",
+            str(output_path),
+        ])
+    elif fmt_lower == "mov" or codec_lower == "prores":
+        cmd.extend([
+            "-vf",
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv422p10le",
+            "-c:v", "prores_ks", "-profile:v", "3",
+            "-c:a", "pcm_s16le",
+            "-shortest",
+            str(output_path),
+        ])
+    else:  # Standard MP4 / H.264 / H.265
+        vcodec = "libx265" if codec_lower in ("h265", "hevc") else "libx264"
+        cmd.extend([
+            "-vf",
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv420p",
+            "-c:v", vcodec, "-preset", "fast", "-b:v", bitrate,
+            "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
+            "-shortest",
+            str(output_path),
+        ])
+
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     captions_burned = False
     if subtitle_srt and Path(subtitle_srt).is_file():
@@ -300,8 +351,8 @@ def export_final_deliverable(
         "success": True,
         "path": str(output_path),
         "output_path": str(output_path),
-        "format": fmt,
-        "codec": codec,
+        "format": fmt_lower,
+        "codec": codec_lower,
         "resolution": resolution,
         "captions_burned": captions_burned,
     }

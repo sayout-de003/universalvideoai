@@ -19,6 +19,106 @@ from pathlib import Path
 from typing import Any
 
 
+_NOT_SPEAKERS = {
+    "visual", "visuals", "camera", "lighting", "narration", "vo", "dialogue",
+    "speech", "spoken", "narrator", "audio", "sound", "sfx", "text", "action",
+    "description", "desc", "format", "runtime", "voice", "title", "screenplay",
+    "scene", "transition", "music", "props", "prop", "location", "int", "ext",
+    "est", "on-screen text", "on screen text",
+}
+
+
+def extract_dialogue_turns(text: str) -> list[dict[str, str]]:
+    """Pull spoken lines only. Stage directions, camera notes, and field labels are not turns."""
+    turns: list[dict[str, str]] = []
+    for match in re.finditer(
+        r"(?m)^[ \t]*(?:\*\*)?([A-Za-z][A-Za-z0-9 .'\-]{0,22}?)(?:\*\*)?\s*:\s*(.+)$",
+        text or "",
+    ):
+        name = match.group(1).strip()
+        line = match.group(2).strip().strip('"').strip()
+        key = re.sub(r"\s+", " ", name.lower().rstrip("."))
+        if key in _NOT_SPEAKERS or "narration" in key or key.startswith(("scene", "on-screen", "on screen")):
+            continue
+        if len(line) < 2:
+            continue
+        turns.append({"speaker": name, "line": clean_markdown_inline(line)})
+    if len({turn["speaker"].lower() for turn in turns}) >= 2:
+        return turns
+
+    fountain: list[dict[str, str]] = []
+    lines = (text or "").splitlines()
+    index = 0
+    while index < len(lines):
+        raw = lines[index].strip()
+        name = re.sub(r"\s*\([^)]*\)\s*$", "", raw).strip()
+        if (
+            name
+            and name == name.upper()
+            and re.fullmatch(r"[A-Z][A-Z0-9 .'\-]{1,22}", name)
+            and name.lower() not in _NOT_SPEAKERS
+            and not name.startswith(("INT.", "EXT.", "EST.", "FADE", "CUT"))
+        ):
+            index += 1
+            if index < len(lines) and lines[index].strip().startswith("("):
+                index += 1
+            spoken: list[str] = []
+            while index < len(lines) and lines[index].strip():
+                nxt = lines[index].strip()
+                cue = re.sub(r"\s*\([^)]*\)\s*$", "", nxt).strip()
+                if cue == cue.upper() and re.fullmatch(r"[A-Z][A-Z0-9 .'\-]{1,22}", cue or "x"):
+                    break
+                if nxt.startswith(("INT.", "EXT.", "EST.", "##", "**")):
+                    break
+                spoken.append(nxt)
+                index += 1
+            line = clean_markdown_inline(" ".join(spoken))
+            if line:
+                fountain.append({"speaker": name.title(), "line": line})
+            continue
+        index += 1
+    if len({turn["speaker"].lower() for turn in fountain}) >= 2:
+        return fountain
+    return []
+
+
+def _scenes_from_dialogue_turns(turns: list[dict[str, str]]) -> list[dict[str, Any]]:
+    speakers = []
+    for turn in turns:
+        if turn["speaker"] not in speakers:
+            speakers.append(turn["speaker"])
+    other = {speakers[i]: speakers[(i + 1) % len(speakers)] for i in range(len(speakers))}
+    scenes: list[dict[str, Any]] = []
+    for idx, turn in enumerate(turns):
+        words = len(turn["line"].split())
+        duration = max(2.5, round(words / 2.4 + 0.6, 1))
+        partner = other.get(turn["speaker"], speakers[0])
+        scenes.append({
+            "order_index": idx,
+            "title": turn["speaker"],
+            "purpose": f"{turn['speaker']} speaks to {partner}",
+            "narration_segment": turn["line"],
+            "visual_description": (
+                f"{turn['speaker']} faces {partner} and speaks. "
+                "Picture follows the chosen visual style. No screenplay notes, camera labels, or title cards."
+            ),
+            "shot_type": "two_shot",
+            "camera_angle": "eye_level",
+            "camera_movement": "static",
+            "lighting": "soft_daylight",
+            "composition": "two_shot",
+            "on_screen_text": turn["speaker"][:48],
+            "sound_cue": "room_tone",
+            "duration_sec": duration,
+            "transition": "cut" if idx == 0 else "dissolve",
+            "speaker_name": turn["speaker"],
+            "dialogue": [{"speaker": turn["speaker"], "line": turn["line"]}],
+            "silent_action_sec": 0.25,
+            "pause_sec": 0.2,
+        })
+    return scenes
+
+
 def clean_markdown_inline(text: str) -> str:
     """Strip markdown formatting tokens (#, *, **, quotes, screenplay labels) from a single-line title or field."""
     s = re.sub(r"^#+\s*", "", (text or "").strip())
@@ -77,6 +177,34 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
         elif "male" in v_low and "female" not in v_low:
             header_voice_gender = "male"
 
+    dialogue_turns = extract_dialogue_turns(normalized)
+    has_voice_field = bool(re.search(
+        r"(?:\*\*)?\s*(?:NARRATION|VO|DIALOGUE|SPEECH|SPOKEN)\b[^:\n]{0,24}:",
+        normalized,
+        flags=re.IGNORECASE,
+    ))
+    if len(dialogue_turns) >= 2 and not has_voice_field:
+        scenes = _scenes_from_dialogue_turns(dialogue_turns)
+        if not title:
+            names = []
+            for turn in dialogue_turns:
+                if turn["speaker"] not in names:
+                    names.append(turn["speaker"])
+            title = " and ".join(names[:2]) or "Conversation"
+        total_dur = header_runtime or round(sum(s["duration_sec"] for s in scenes), 1)
+        return {
+            "is_structured": True,
+            "title": title[:80],
+            "subject": title[:80],
+            "header_format": header_format,
+            "duration_sec": total_dur,
+            "target_duration_sec": total_dur,
+            "voice_gender": header_voice_gender,
+            "character_name": dialogue_turns[0]["speaker"][:48],
+            "character_description": f"Two people in a 2D animated conversation: {title}.",
+            "scenes": scenes,
+        }
+
     # 3. Universal Scene Block Matching
     header_regex = re.compile(
         r"(?:^|\n)\s*((?:##+\s*(?:SCENE|ACT)\b|(?:\(?\bACT\s+\d+.*?\bSCENE\s+\d+\)?)|SCENE\s+\d+|Scene\s+\d+|\[\s*SCENE\s+\d+\s*\]|\(\s*(?:ACT\s+\d+.*?)?Scene\s+\d+\s*\)|\d+\.\s*Scene\b|EXT\.|INT\.)[^\n]*)",
@@ -91,7 +219,7 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
             body_start = h.end()
             body_end = headers[idx + 1].start() if idx + 1 < len(headers) else len(normalized)
             blocks.append((h_line, normalized[body_start:body_end].strip()))
-    elif re.search(r"\b(?:VISUAL|NARRATION|VO|DIALOGUE|NARRATOR)\b", normalized, flags=re.IGNORECASE):
+    elif re.search(r"(?:\*\*)?\s*(?:VISUAL|NARRATION|VO|DIALOGUE|NARRATOR)\s*:", normalized, flags=re.IGNORECASE):
         # Structured content without explicit scene headings - parse as single/intro scene
         blocks.append(("Scene 1", normalized))
 
@@ -222,6 +350,7 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
         "title": title[:80],
         "subject": title[:80],
         "header_format": header_format,
+        "duration_sec": total_dur,
         "target_duration_sec": total_dur,
         "voice_gender": header_voice_gender,
         "character_name": title[:48],

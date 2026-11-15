@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, CheckCircle2, ChevronDown, ChevronRight, Pause, Play, RotateCcw, Sparkles, XCircle } from "lucide-react";
+import { Check, CheckCircle2, ChevronDown, ChevronRight, Download, Pause, Play, RotateCcw, Sparkles, XCircle } from "lucide-react";
 import { API_BASE } from "../api/client";
 import { PIPELINE, generatedSeconds, isIdle, humanDuration, progressOfDetail, timecode } from "../lib/progress";
 import type { ProjectDetail } from "../types/studio";
@@ -118,6 +118,7 @@ export function BacklotMonitorView({ project, liveEvents, onRun, onPause, onResu
   const latestQa = project.qa_reports[0];
   const [showSteps, setShowSteps] = useState(false);
   const [showDecisions, setShowDecisions] = useState(true);
+  const [videoError, setVideoError] = useState(false);
   const decisions = useMemo(() => extractAiDecisions(project), [project]);
 
   // Estimate time left from how fast scenes finished since this page started watching the run.
@@ -239,8 +240,27 @@ export function BacklotMonitorView({ project, liveEvents, onRun, onPause, onResu
       {finished && (
         <section className="card p-6 space-y-4">
           <h2 className="font-bold">Result</h2>
-          <div className="rounded-lg bg-ink overflow-hidden aspect-video max-h-[420px] mx-auto">
-            <video controls className="w-full h-full object-contain" src={`${API_BASE}/api/projects/${project.project.id}/media/exports/final_production.mp4`} />
+          <div className="rounded-lg bg-ink overflow-hidden aspect-video max-h-[420px] mx-auto relative flex items-center justify-center">
+            {videoError ? (
+              <div className="text-center p-6 text-white space-y-3">
+                <p className="text-sm text-slate-300">Video preview could not be streamed by browser.</p>
+                <a
+                  href={`${API_BASE}/api/projects/${project.project.id}/media/exports/final_production.mp4?download=true`}
+                  download="final_production.mp4"
+                  className="btn btn-primary btn-sm inline-flex items-center gap-2"
+                >
+                  <Download className="w-4 h-4" /> Download Video Directly
+                </a>
+              </div>
+            ) : (
+              <video
+                controls
+                preload="metadata"
+                className="w-full h-full object-contain"
+                src={`${API_BASE}/api/projects/${project.project.id}/media/exports/final_production.mp4`}
+                onError={() => setVideoError(true)}
+              />
+            )}
           </div>
           {latestQa && (
             <div>

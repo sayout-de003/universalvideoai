@@ -294,9 +294,39 @@ def api_export_project(project_id: str, req: ExportRequest) -> dict[str, Any]:
     master_mix = ws / "stems" / "master_mix.wav"
     if not silent_master.exists() or not master_mix.exists():
         raise HTTPException(status_code=400, detail="Project must be rendered before exporting.")
-    out_path = ws / "exports" / f"export_{req.resolution}_{req.codec}.{req.format}"
-    chapters = [{"title": c["title"], "duration_sec": c["target_duration_sec"]} for c in detail["chapters"]] if req.include_chapters else None
-    return export_final_deliverable(silent_master, master_mix, out_path, chapters=chapters, fmt=req.format, codec=req.codec, resolution=req.resolution, fps=req.fps, bitrate=req.bitrate)
+    out_name = f"export_{req.resolution}_{req.codec}.{req.format}"
+    out_path = ws / "exports" / out_name
+    chapters = [
+        {"title": c.get("title", f"Chapter {i+1}"), "duration_sec": c.get("target_duration_sec") or c.get("duration_sec", 0)}
+        for i, c in enumerate(detail.get("chapters", []))
+    ] if req.include_chapters else None
+
+    subtitle_srt = None
+    if req.include_subtitles:
+        sub_dir = ws / "subtitles"
+        en_srt = sub_dir / "subtitles_en.srt"
+        if en_srt.exists():
+            subtitle_srt = en_srt
+        else:
+            srts = sorted(sub_dir.glob("*.srt"))
+            if srts:
+                subtitle_srt = srts[0]
+
+    res = export_final_deliverable(
+        silent_master,
+        master_mix,
+        out_path,
+        chapters=chapters,
+        subtitle_srt=subtitle_srt,
+        fmt=req.format,
+        codec=req.codec,
+        resolution=req.resolution,
+        fps=req.fps,
+        bitrate=req.bitrate,
+    )
+    res["download_url"] = f"/api/projects/{project_id}/media/exports/{out_name}?download=true"
+    res["filename"] = out_name
+    return res
 
 
 @app.post("/api/files/extract")
@@ -382,7 +412,7 @@ def api_list_project_files(project_id: str) -> dict[str, Any]:
     return {"project_id": project_id, "workspace_dir": str(ws), "folders": folders}
 
 
-@app.get("/api/projects/{project_id}/media/{subpath:path}")
+@app.api_route("/api/projects/{project_id}/media/{subpath:path}", methods=["GET", "HEAD"])
 def api_serve_media(project_id: str, subpath: str, download: bool = False) -> FileResponse:
     ws = (PROJECTS_DIR / project_id).resolve()
     target = (ws / subpath).resolve()
@@ -710,6 +740,135 @@ def api_create_character(project_id: str, payload: dict[str, Any]) -> dict[str, 
 def api_list_opuscar_styles(category: str | None = None, query: str | None = None) -> dict[str, Any]:
     from backend.integrations.lemo_opuscar_adapter import lemo_opuscar_adapter
     return lemo_opuscar_adapter.list_styles(category=category, query=query)
+
+
+@app.get("/api/skills")
+def api_list_all_skills() -> dict[str, Any]:
+    """Return all studio core pipeline skills and Claude open-source animation skills."""
+    from backend.integrations.animation_skills_adapter import animation_skills_adapter
+    from backend.orchestration.engine_registry import get_engine_catalog
+
+    catalog = get_engine_catalog()
+    avail = {e["id"]: bool(e.get("available")) for e in catalog.get("rendering_engines", [])}
+
+    studio_skills: list[dict[str, Any]] = [
+        {
+            "id": "blender",
+            "name": "Headless Blender 3D",
+            "tagline": "Rigged 3D humanoid character, PBR lighting & custom 3D sets",
+            "category": "3d",
+            "technology": "Blender EEVEE / Cycles",
+            "installed": avail.get("blender", False),
+            "ready": avail.get("blender", False),
+            "source": "studio_core",
+            "formats": ["short_films", "animation_motion_graphics", "product_launch_films"],
+        },
+        {
+            "id": "animated-short-film",
+            "name": "Animated Short Film",
+            "tagline": "Painterly cinematic style-lock & shot-by-shot causal planning",
+            "category": "style",
+            "technology": "Causal Shot Planner + Style-Lock",
+            "installed": True,
+            "ready": True,
+            "source": "studio_core",
+            "formats": ["short_films", "fictional_storytelling"],
+        },
+        {
+            "id": "lemo-opuscar",
+            "name": "Lemo-Opuscar Code Films",
+            "tagline": "99 code-driven film aesthetics (Impasto, Watercolor, Ukiyo-e, Neon)",
+            "category": "code_art",
+            "technology": "HTML5 / Canvas / Shader",
+            "installed": True,
+            "ready": True,
+            "source": "studio_core",
+            "formats": ["animation_motion_graphics", "music_videos"],
+        },
+        {
+            "id": "anatomy",
+            "name": "Anatomy Isometric Explainer",
+            "tagline": "Isometric precision technical schematics & physical exploded teardowns",
+            "category": "3d",
+            "technology": "Isometric SVG + WebGL",
+            "installed": True,
+            "ready": True,
+            "source": "studio_core",
+            "formats": ["educational_videos", "tutorials_demos", "saas_explainers"],
+        },
+        {
+            "id": "remotion",
+            "name": "Remotion Kinetic HUD",
+            "tagline": "Code-driven motion graphics, dynamic charts & animated typography",
+            "category": "motion_graphics",
+            "technology": "React + Remotion",
+            "installed": avail.get("remotion", True),
+            "ready": avail.get("remotion", True),
+            "source": "studio_core",
+            "formats": ["saas_explainers", "advertisements", "youtube_shorts"],
+        },
+        {
+            "id": "openmontage",
+            "name": "OpenMontage Pacing",
+            "tagline": "Fast rhythmic cuts, multi-clip speed ramps & pacing",
+            "category": "pacing",
+            "technology": "OpenMontage + FFmpeg",
+            "installed": openmontage_adapter.is_available(),
+            "ready": openmontage_adapter.is_available(),
+            "source": "studio_core",
+            "formats": ["instagram_reels", "youtube_shorts", "cinematic_trailers"],
+        },
+        {
+            "id": "voicestudio",
+            "name": "VoiceStudio & OpenWhispr",
+            "tagline": "Dual neural conversational actors & word-level subtitle sync",
+            "category": "audio",
+            "technology": "Edge Neural TTS + OpenWhispr",
+            "installed": True,
+            "ready": True,
+            "source": "studio_core",
+            "formats": ["documentaries", "interviews_podcasts", "educational_videos"],
+        },
+        {
+            "id": "hyperframes",
+            "name": "HyperFrames Vector Cel",
+            "tagline": "2D character animation & multiplane depth parallax",
+            "category": "motion_graphics",
+            "technology": "SVG + Multiplane Engine",
+            "installed": avail.get("hyperframes", True),
+            "ready": avail.get("hyperframes", True),
+            "source": "studio_core",
+            "formats": ["animation_motion_graphics", "fictional_storytelling"],
+        },
+        {
+            "id": "hypit",
+            "name": "Hypit Semantic Composition",
+            "tagline": "Narrative semantic timeline alignment & adaptive beat ranking",
+            "category": "pacing",
+            "technology": "Semantic Beat Engine",
+            "installed": True,
+            "ready": True,
+            "source": "studio_core",
+            "formats": ["documentaries", "youtube_longform", "brand_films"],
+        },
+    ]
+
+    anim_skills = [
+        {
+            "id": s["id"],
+            "name": s["name"],
+            "tagline": s["description"],
+            "category": "animation",
+            "technology": s["technology"],
+            "installed": bool(s.get("installed", True)),
+            "ready": bool(s.get("ready", True)),
+            "source": "claude_animation",
+            "formats": s.get("formats", []),
+        }
+        for s in animation_skills_adapter.list_skills()
+    ]
+
+    return {"skills": studio_skills + anim_skills}
 
 
 @app.get("/api/skills/animation")

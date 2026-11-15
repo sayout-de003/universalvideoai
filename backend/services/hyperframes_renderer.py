@@ -111,7 +111,7 @@ _PIXAR_MOTION_TEMPLATE = r'''<!DOCTYPE html>
   }
 </style>
 </head>
-<body class="__BODY_CLASS__">
+<body class="__BODY_CLASS__" style="__BODY_STYLE__">
   <canvas id="stageCanvas"></canvas>
   <div class="hud">
     <div class="top-row">
@@ -193,16 +193,25 @@ const PALETTES = {
     sun: "#facc15", mountFar: "#4ade80", mountMid: "#22c55e",
     groundTop: "#16a34a", groundBot: "#15803d",
     suit: "#ef4444", suitRim: "#f87171", accent: "#f59e0b"
+  },
+  cyberpunk: {
+    skyTop: "#090218", skyMid: "#1e0836", skyBot: "#4c0f4d",
+    sun: "#ff2a85", mountFar: "#140826", mountMid: "#220e42",
+    groundTop: "#0c0618", groundBot: "#06030d",
+    suit: "#00f5d4", suitRim: "#ff2a85", accent: "#00f5d4"
   }
 };
-const pal = PALETTES[THEME] || PALETTES.pixar_character_world;
+const isCyberpunk = THEME === "cyberpunk" || (CHARACTER_META && /cyberpunk|flying car|neon/i.test(CHARACTER_META.scene_style || ""));
+const pal = isCyberpunk ? PALETTES.cyberpunk : (PALETTES[THEME] || PALETTES.pixar_character_world);
 
 function drawPixelArtScene(ctx, w, h, p, t) {
   const grid = Math.max(4, Math.floor(w / 160));
   const snap = (v) => Math.floor(v / grid) * grid;
   ctx.imageSmoothingEnabled = false;
 
-  const bands = [pal.skyTop, "#29366f", pal.skyMid, "#41a6f6", pal.skyBot];
+  const bands = isCyberpunk
+    ? [pal.skyTop, "#120428", pal.skyMid, "#340a47", pal.skyBot]
+    : [pal.skyTop, "#29366f", pal.skyMid, "#41a6f6", pal.skyBot];
   const bh = Math.ceil((h * 0.72) / bands.length);
   for (let i = 0; i < bands.length; i++) {
     ctx.fillStyle = bands[i];
@@ -214,10 +223,47 @@ function drawPixelArtScene(ctx, w, h, p, t) {
   ctx.fillStyle = pal.sun;
   ctx.fillRect(sx - grid * 5, sy - grid * 5, grid * 10, grid * 10);
 
-  ctx.fillStyle = pal.mountFar;
-  for (let x = 0; x < w; x += grid * 4) {
-    const mh = snap(h * 0.18 + Math.sin((x + t * 20) * 0.01) * h * 0.08);
-    ctx.fillRect(x, snap(h * 0.68) - mh, grid * 4, mh);
+  if (isCyberpunk) {
+    // Pixel-art neon skyscrapers & glowing windows
+    for (let i = 0; i < 18; i++) {
+      const bx = snap((i * w) / 18);
+      const bw = snap(w / 18) - grid;
+      const bheight = snap(h * (0.22 + ((i * 37 + SCENE_SEED) % 30) * 0.012));
+      const by = snap(h * 0.70) - bheight;
+      ctx.fillStyle = i % 2 === 0 ? pal.mountFar : pal.mountMid;
+      ctx.fillRect(bx, by, bw, bheight);
+      ctx.fillStyle = i % 3 === 0 ? "#00f5d4" : "#ff2a85";
+      for (let wy = by + grid * 2; wy < snap(h * 0.68); wy += grid * 3) {
+        if (((i + wy) % 5) !== 0) {
+          ctx.fillRect(bx + grid, wy, Math.max(grid, bw - grid * 2), grid);
+        }
+      }
+    }
+    // Flying cars with neon trails
+    for (let c = 0; c < 6; c++) {
+      const dir = c % 2 === 0 ? 1 : -1;
+      const speed = 0.14 + c * 0.04;
+      const rawX = ((c * 0.19 + t * speed * dir) % 1.2 + 1.2) % 1.2 - 0.1;
+      const fx = snap(rawX * w);
+      const fy = snap(h * (0.20 + c * 0.07));
+      ctx.fillStyle = c % 2 === 0 ? "#00f5d4" : "#ff2a85";
+      ctx.fillRect(fx, fy, grid * 5, grid * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.65)";
+      ctx.fillRect(fx + (dir > 0 ? -grid * 6 : grid * 5), fy, grid * 5, grid);
+    }
+    // Neon rain
+    ctx.fillStyle = "rgba(0, 245, 212, 0.35)";
+    for (let r = 0; r < 40; r++) {
+      const rx = snap(((r * 97 + t * 40) % w));
+      const ry = snap(((r * 53 + t * 260) % (h * 0.70)));
+      ctx.fillRect(rx, ry, grid, grid * 2);
+    }
+  } else {
+    ctx.fillStyle = pal.mountFar;
+    for (let x = 0; x < w; x += grid * 4) {
+      const mh = snap(h * 0.18 + Math.sin((x + t * 20) * 0.01) * h * 0.08);
+      ctx.fillRect(x, snap(h * 0.68) - mh, grid * 4, mh);
+    }
   }
 
   ctx.fillStyle = pal.groundTop;
@@ -1015,10 +1061,100 @@ window.__renderAtTime = (t) => {
     ctx.restore();
   }
 
-  // 7. Render Consistent Dynamic Scene Character
+  // 7. Characters: One character, two people, or three people in animated group dialogue
   const charX = w * (0.28 + p * 0.14);
   const charY = h * 0.62;
-  drawSceneCharacter(ctx, charX, charY, Math.min(w, h) / 680, t, p);
+  const charScale = Math.min(w, h) / 680;
+  const partnerName = (CHARACTER_META && CHARACTER_META.partner) || "";
+  const isThree = Boolean(CHARACTER_META && (CHARACTER_META.three_people || (CHARACTER_META.characters && CHARACTER_META.characters.length >= 3)));
+
+  if (isThree) {
+    const chars = (CHARACTER_META.characters && CHARACTER_META.characters.length >= 3)
+      ? CHARACTER_META.characters
+      : ["Alex", "Maya", "Liam"];
+    const spk = String(CHARACTER_META.speaking || "").toLowerCase();
+    const spkName = String(CHARACTER_META.speaker_name || "").toLowerCase();
+    let activeIdx = 0;
+    if (spk === "center" || spkName.includes("maya") || spk === "maya" || spk === "character_2") activeIdx = 1;
+    else if (spk === "right" || spkName.includes("liam") || spk === "liam" || spk === "character_3") activeIdx = 2;
+    else if (CHARACTER_META.speaking_index !== undefined) activeIdx = Number(CHARACTER_META.speaking_index) % 3;
+
+    const talk = Math.abs(Math.sin(t * 8.5));
+    const baseScale = charScale * 0.82;
+    const positions = [
+      { x: w * 0.22, name: chars[0], suit: "#1e3a8a", rim: "#93c5fd" },
+      { x: w * 0.50, name: chars[1], suit: "#9d174d", rim: "#f472b6" },
+      { x: w * 0.78, name: chars[2], suit: "#065f46", rim: "#6ee7b7" },
+    ];
+
+    positions.forEach((pos, idx) => {
+      const isSpeaking = (idx === activeIdx);
+      const nod = isSpeaking ? Math.sin(t * 3.5) * 4 : Math.sin(t * 2.2 + idx) * 2;
+      const suitBackup = pal.suit;
+      const rimBackup = pal.suitRim;
+      pal.suit = pos.suit;
+      pal.suitRim = pos.rim;
+
+      ctx.save();
+      if (idx === 0) {
+        drawSceneCharacter(ctx, pos.x, charY + nod, baseScale, t, p);
+      } else if (idx === 1) {
+        drawSceneCharacter(ctx, pos.x, charY + nod, baseScale * 1.02, t, p);
+      } else {
+        ctx.translate(pos.x, 0);
+        ctx.scale(-1, 1);
+        ctx.translate(-pos.x, 0);
+        drawSceneCharacter(ctx, pos.x, charY + nod, baseScale, t, p);
+      }
+      ctx.restore();
+
+      pal.suit = suitBackup;
+      pal.suitRim = rimBackup;
+
+      if (isSpeaking) {
+        const mouthX = pos.x;
+        ctx.fillStyle = "#0f172a";
+        ctx.beginPath();
+        ctx.ellipse(mouthX, charY + nod - baseScale * 16, 5 + talk * 3, 2.5 + talk * 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.save();
+      const tagY = charY - baseScale * 125;
+      ctx.font = "bold 13px Inter, sans-serif";
+      const tagText = isSpeaking ? `● ${pos.name} (talking)` : pos.name;
+      const tw = ctx.measureText(tagText).width;
+      ctx.fillStyle = isSpeaking ? "rgba(225, 29, 72, 0.92)" : "rgba(15, 23, 42, 0.75)";
+      ctx.beginPath();
+      ctx.roundRect(pos.x - tw / 2 - 10, tagY - 14, tw + 20, 22, 6);
+      ctx.fill();
+      ctx.strokeStyle = isSpeaking ? "#fda4af" : "rgba(255, 255, 255, 0.25)";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.fillText(tagText, pos.x, tagY + 2);
+      ctx.restore();
+    });
+  } else if (partnerName) {
+    const talk = Math.abs(Math.sin(t * 8));
+    const speakerOnRight = (CHARACTER_META.speaking || "") === "partner";
+    drawSceneCharacter(ctx, w * 0.32, charY, charScale * 0.92, t, p);
+    const suit = pal.suit;
+    const rim = pal.suitRim;
+    pal.suit = pal.accent;
+    pal.suitRim = "#f8fafc";
+    drawSceneCharacter(ctx, w * 0.68, charY, charScale * 0.92, t, p);
+    pal.suit = suit;
+    pal.suitRim = rim;
+    const mouthX = speakerOnRight ? w * 0.68 : w * 0.32;
+    ctx.fillStyle = "#0f172a";
+    ctx.beginPath();
+    ctx.ellipse(mouthX, charY - charScale * 16, 6 + talk * 3, 3 + talk * 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    drawSceneCharacter(ctx, charX, charY, charScale, t, p);
+  }
 
   if (THEME === "hand_drawn_storybook") {
     ctx.save();
@@ -1086,7 +1222,7 @@ def render_hyperframes_scene(
     clean_speaker = clean_markdown_inline(str(scene.get("speaker_name") or "STUDIO ANIMATION"))
     eyebrow = html_lib.escape(f"{category.replace('_', ' ').upper()} • {clean_speaker}")
     raw_style = str(scene.get("visual_style") or scene.get("animation_theme") or "").strip().lower()
-    if raw_style in ("anime", "cartoon_2d", "pixel_art", "2d_illustrated", "hand_drawn_storybook", "pixar_character_world", "painterly_parallax", "kinetic_data_hud"):
+    if raw_style in ("anime", "cartoon_2d", "pixel_art", "2d_illustrated", "hand_drawn_storybook", "pixar_character_world", "painterly_parallax", "kinetic_data_hud", "cyberpunk"):
         theme = raw_style
     elif raw_style == "3d_stylized":
         theme = "pixar_character_world"
@@ -1094,23 +1230,61 @@ def render_hyperframes_scene(
         theme = "anime"
     elif any(k in raw_style for k in ("cartoon", "comic", "toon")):
         theme = "cartoon_2d"
+    elif any(k in raw_style for k in ("cyberpunk", "neon", "sci-fi")):
+        theme = "cyberpunk"
     else:
         theme = str(scene.get("animation_theme") or "pixar_character_world")
+    vis_desc_low = str(scene.get("visual_description") or "").lower()
+    if theme == "pixar_character_world" and any(k in vis_desc_low for k in ("cyberpunk", "flying car", "neon city")):
+        theme = "cyberpunk"
     seed = int(scene.get("order_index") or 1) + sum(ord(c) for c in clean_title[:12])
 
+    partner_name = clean_markdown_inline(str(scene.get("partner_name") or ""))
+    speaker_name = clean_markdown_inline(str(scene.get("speaker_name") or scene.get("character_name") or ""))
     cat_low = category.lower()
     is_cinematic_narrative = (
-        theme in ("anime", "cartoon_2d", "hand_drawn_storybook", "pixel_art")
+        bool(partner_name)
+        or theme in ("anime", "cartoon_2d", "hand_drawn_storybook", "pixel_art", "cyberpunk")
         or cat_low in ("documentary", "historical", "film", "cinema", "brand_film", "narrative", "animation")
     )
     show_hud = not is_cinematic_narrative
 
+    chars_list = scene.get("characters") or []
+    is_three = bool(scene.get("three_people")) or len(chars_list) >= 3 or any(
+        k in (clean_title + " " + vis_desc_low).lower() for k in ("three people", "3 people", "three characters", "3 characters", "trio")
+    )
+    if is_three and len(chars_list) < 3:
+        chars_list = ["Alex", "Maya", "Liam"]
+
+    speaking_idx = 0
+    if speaker_name:
+        for idx, cname in enumerate(chars_list):
+            if cname.lower() in speaker_name.lower():
+                speaking_idx = idx
+                break
+    else:
+        speaking_idx = int(scene.get("speaking_index") or 0) % max(1, len(chars_list))
+
     char_meta = {
         "name": clean_markdown_inline(str(scene.get("character_name") or scene.get("title") or "")),
         "desc": str(scene.get("character_description") or scene.get("visual_description") or ""),
+        "partner": partner_name,
+        "three_people": is_three,
+        "characters": chars_list if is_three else [],
+        "speaker_name": speaker_name or (chars_list[speaking_idx] if is_three else ""),
+        "speaking_index": speaking_idx,
+        "speaking": "partner" if partner_name and speaker_name.lower() == partner_name.lower() else "lead",
+        "scene_style": "cyberpunk" if ("cyberpunk" in vis_desc_low or "flying car" in vis_desc_low or theme == "cyberpunk") else "",
     }
 
     body_class = "" if show_hud else "hide-hud"
+    grade_css = {
+        "teal_orange": "filter:contrast(1.08) saturate(1.25) hue-rotate(-12deg)",
+        "film_noir": "filter:grayscale(1) contrast(1.2)",
+        "vibrant_anime": "filter:saturate(1.45) contrast(1.05)",
+        "vintage_warm": "filter:sepia(0.25) saturate(1.1)",
+        "warm_cinema": "filter:sepia(0.25) saturate(1.1)",
+    }.get(str(scene.get("color_grade") or ""), "")
     cinematic_caption_html = ""
     if not show_hud and clean_subline and clean_subline.lower() != "silence.":
         cinematic_caption_html = f'<div class="cinematic-caption">{subline}</div>'
@@ -1118,6 +1292,7 @@ def render_hyperframes_scene(
     html = (
         _PIXAR_MOTION_TEMPLATE
         .replace("__BODY_CLASS__", body_class)
+        .replace("__BODY_STYLE__", grade_css)
         .replace("__EYEBROW__", eyebrow)
         .replace("__HEADLINE__", title)
         .replace("__SUBLINE__", subline)

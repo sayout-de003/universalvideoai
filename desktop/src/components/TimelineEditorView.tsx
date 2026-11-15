@@ -35,7 +35,7 @@ export function TimelineEditorView({ project, onTimelineOp, onUndo, onRedo }: Pr
       </div>
       {finished && (
         <div className="rounded-lg bg-ink overflow-hidden aspect-video max-h-[340px] mx-auto">
-          <video controls className="w-full h-full object-contain" src={`${API_BASE}/api/projects/${pid}/media/exports/final_production.mp4`} />
+          <video controls preload="metadata" className="w-full h-full object-contain" src={`${API_BASE}/api/projects/${pid}/media/exports/final_production.mp4`} />
         </div>
       )}
       <div className="card p-4 overflow-x-auto">
