@@ -13,6 +13,7 @@ from backend.integrations.lemo_opuscar_adapter import lemo_opuscar_adapter
 from backend.models import ProjectCreateRequest
 from backend.orchestration.director import create_project, get_project_detail, run_production
 from backend.orchestration.shot_orchestrator import plan_screenplay_shots, regenerate_shot, render_single_shot
+from backend.services.animated_short_film_service import build_animated_short_package, diagnose_and_repair_shot
 from backend.services.character_asset_service import (
     auto_rig_mesh,
     get_default_humanoid_asset,
@@ -141,6 +142,39 @@ TOOLS = [
             "required": ["page_dir", "output_mp4"],
         },
     },
+    {
+        "name": "studio_animate_short_film",
+        "description": "Compile a painterly 2D Animated Short Film package (causal story beats, character/environment/vehicle plate prompts, ordered reference manifest, timestamped Master Video Prompt with opening/closing style locks, and sound cue list).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "idea": {"type": "string"},
+                "duration_sec": {"type": "integer"},
+                "aspect_ratio": {"type": "string"},
+                "hero_description": {"type": "string"},
+                "world_description": {"type": "string"},
+                "vehicle_or_prop": {"type": "string"},
+                "editing_mode": {"type": "string"},
+                "audio_mode": {"type": "string"},
+                "project_id": {"type": "string"},
+                "execute_plates": {"type": "boolean"},
+            },
+            "required": ["idea"],
+        },
+    },
+    {
+        "name": "studio_repair_animated_shot",
+        "description": "Diagnose a rendered animated short film defect (look/CGI drift, identity, prop duplication, space/time, motion, pace, ending) and return a repaired Master Video Prompt.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "issue_description": {"type": "string"},
+                "master_prompt": {"type": "string"},
+                "category": {"type": "string"},
+            },
+            "required": ["issue_description", "master_prompt"],
+        },
+    },
 ]
 
 
@@ -215,6 +249,25 @@ def handle_tool_call(name: str, args: dict[str, Any]) -> Any:
             output_mp4=Path(args["output_mp4"]),
             fps=int(args.get("fps", 24)),
             size=str(args.get("size", "1280x720")),
+        )
+    if name == "studio_animate_short_film":
+        return build_animated_short_package(
+            idea=str(args["idea"]),
+            duration_sec=int(args.get("duration_sec", 30)),
+            aspect_ratio=str(args.get("aspect_ratio", "16:9")),
+            hero_description=args.get("hero_description"),
+            world_description=args.get("world_description"),
+            vehicle_or_prop=args.get("vehicle_or_prop"),
+            editing_mode=str(args.get("editing_mode", "motivated_cuts")),
+            audio_mode=str(args.get("audio_mode", "native_diegetic")),
+            project_id=args.get("project_id"),
+            execute_plates=bool(args.get("execute_plates", False)),
+        )
+    if name == "studio_repair_animated_shot":
+        return diagnose_and_repair_shot(
+            issue_description=str(args["issue_description"]),
+            master_prompt=str(args["master_prompt"]),
+            category=args.get("category"),
         )
     raise ValueError(f"Unknown tool: {name}")
 

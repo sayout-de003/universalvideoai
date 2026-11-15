@@ -554,3 +554,38 @@ def api_get_opuscar_style(slug_or_name: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=res.get("error", "Style not found"))
     return res
 
+
+@app.post("/api/animated-short/package")
+def api_create_animated_short_package(payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.services.animated_short_film_service import build_animated_short_package
+    idea = str(payload.get("idea", "")).strip()
+    if not idea:
+        raise HTTPException(status_code=400, detail="idea is required")
+    return build_animated_short_package(
+        idea=idea,
+        duration_sec=int(payload.get("duration_sec", 30)),
+        aspect_ratio=str(payload.get("aspect_ratio", "16:9")),
+        hero_description=payload.get("hero_description"),
+        world_description=payload.get("world_description"),
+        vehicle_or_prop=payload.get("vehicle_or_prop"),
+        editing_mode=str(payload.get("editing_mode", "motivated_cuts")),
+        audio_mode=str(payload.get("audio_mode", "native_diegetic")),
+        project_id=payload.get("project_id"),
+        execute_plates=bool(payload.get("execute_plates", False)),
+    )
+
+
+@app.post("/api/animated-short/repair")
+def api_repair_animated_short(payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.services.animated_short_film_service import diagnose_and_repair_shot
+    issue = str(payload.get("issue_description", "")).strip()
+    master_prompt = str(payload.get("master_prompt", "")).strip()
+    if not issue or not master_prompt:
+        raise HTTPException(status_code=400, detail="issue_description and master_prompt are required")
+    return diagnose_and_repair_shot(
+        issue_description=issue,
+        master_prompt=master_prompt,
+        category=payload.get("category"),
+    )
+
+

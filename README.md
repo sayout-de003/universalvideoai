@@ -295,6 +295,34 @@ curl -X POST http://127.0.0.1:8420/api/projects/<PROJECT_ID>/qa/human-approve \
   -d '{"report_id": "<QA_REPORT_ID>", "approved": true, "reviewer_notes": "Checked lighting and lip sync"}'
 ```
 
+### H. Painterly 2D Animated Short Film Workflow (`animated-short-film`)
+Turn a one-sentence idea into a painterly 2D cinematic short film package with causal story beats, 3 reference plate prompts (`character_sheet`, `environment_plate`, `vehicle_or_prop_sheet`), an ordered reference manifest, a timestamped **Master Video Prompt** with verbatim Opening & Closing Style Locks, and a repair engine for fixing CGI/identity/prop drift:
+```bash
+# Compile a 30s painterly animated short film package:
+curl -X POST http://127.0.0.1:8420/api/animated-short/package \
+  -H "Content-Type: application/json" \
+  -d '{
+    "idea": "A courier leaps a rising drawbridge on a vintage scrambler to deliver a sealed brass canister",
+    "duration_sec": 30,
+    "aspect_ratio": "16:9"
+  }'
+
+# Diagnose and repair a rendered shot (e.g. glossy 3D drift or prop duplication):
+curl -X POST http://127.0.0.1:8420/api/animated-short/repair \
+  -H "Content-Type: application/json" \
+  -d '{
+    "issue_description": "Close-up turned into glossy 3D plastic metal and a second canister appeared",
+    "master_prompt": "<MASTER_VIDEO_PROMPT>"
+  }'
+```
+Also available directly in Antigravity via the `animated-short-film` skill and MCP tools `studio_animate_short_film` and `studio_repair_animated_shot`.
+
+### I. Lemo-Opuscar 99 Code-Drawn Film Styles (`lemo-opuscar`)
+List, inspect, and render any of the 99 code-drawn film styles (`impasto-oil`, `watercolor-brush`, `ukiyo-e`, `neon-tubes`, `swiss-grid`, etc.) via REST or MCP (`opuscar_list_styles`, `opuscar_get_style`, `opuscar_render_page`):
+```bash
+curl "http://127.0.0.1:8420/api/opuscar/styles?query=oil"
+```
+
 ---
 
 ## 6. Running the Test Suite

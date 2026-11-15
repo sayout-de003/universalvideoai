@@ -131,8 +131,9 @@ def test_scenario_antigravity_plugin_and_mcp_server():
     assert (plugin_root / "plugin.json").exists()
     assert (plugin_root / "mcp_config.json").exists()
     assert (plugin_root / "hooks.json").exists()
-    assert len(list((plugin_root / "skills").glob("*/SKILL.md"))) >= 20
+    assert len(list((plugin_root / "skills").glob("*/SKILL.md"))) >= 21
     assert (plugin_root / "skills" / "lemo-opuscar" / "SKILL.md").exists()
+    assert (plugin_root / "skills" / "animated-short-film" / "SKILL.md").exists()
     assert len(list((plugin_root / "agents").glob("*.md"))) == 22
 
     # Smoke test stdio MCP server
@@ -141,16 +142,54 @@ def test_scenario_antigravity_plugin_and_mcp_server():
         json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
         json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "studio_list_formats", "arguments": {}}}),
         json.dumps({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "opuscar_list_styles", "arguments": {"query": "neon"}}}),
+        json.dumps({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "studio_animate_short_film", "arguments": {"idea": "A courier leaps a rising drawbridge on a vintage scrambler", "duration_sec": 30}}}),
     ]) + "\n"
     proc = subprocess.run(
         [".venv/bin/python", "-m", "backend.mcp_server"],
         input=reqs, text=True, capture_output=True, timeout=15, check=True,
     )
     lines = [json.loads(ln) for ln in proc.stdout.strip().splitlines()]
-    assert len(lines) == 4
+    assert len(lines) == 5
     assert lines[0]["result"]["serverInfo"]["name"] == "universal-video-studio"
-    assert len(lines[1]["result"]["tools"]) >= 17
+    assert len(lines[1]["result"]["tools"]) >= 19
     opuscar_res = json.loads(lines[3]["result"]["content"][0]["text"])
     assert opuscar_res["total"] >= 1
     assert any(s["slug"] == "neon-tubes" for s in opuscar_res["styles"])
+    anim_res = json.loads(lines[4]["result"]["content"][0]["text"])
+    assert anim_res["ok"] is True
+    assert "CRITICAL STYLE LOCK:" in anim_res["master_video_prompt"]
+    assert "From first frame to last, the same painted world" in anim_res["master_video_prompt"]
+    assert len(anim_res["plate_prompts"]) == 3
     assert len(json.loads(lines[2]["result"]["content"][0]["text"])["formats"]) == 25
+
+
+def test_scenario_animated_short_film_api_and_repair():
+    with TestClient(app) as client:
+        pkg = client.post(
+            "/api/animated-short/package",
+            json={
+                "idea": "A rooftop runner dives from a water tower into a narrow neon canyon and lands on a wet street",
+                "duration_sec": 15,
+                "aspect_ratio": "9:16",
+            },
+        )
+        assert pkg.status_code == 200
+        data = pkg.json()
+        assert data["duration_sec"] == 15
+        assert data["aspect_ratio"] == "9:16"
+        assert len(data["story"]["beats"]) == 4
+        assert "CRITICAL STYLE LOCK:" in data["master_video_prompt"]
+
+        rep = client.post(
+            "/api/animated-short/repair",
+            json={
+                "issue_description": "Close-up turned into glossy 3D plastic metal and a second radio duplicated on the shoulder",
+                "master_prompt": data["master_video_prompt"],
+            },
+        )
+        assert rep.status_code == 200
+        rep_data = rep.json()
+        assert "look" in rep_data["detected_categories"]
+        assert "prop_logic" in rep_data["detected_categories"]
+        assert "REPAIR LOCK" in rep_data["repaired_master_prompt"]
+
