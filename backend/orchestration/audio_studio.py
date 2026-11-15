@@ -160,6 +160,19 @@ def generate_tts(
         aiff_tmp.unlink(missing_ok=True)
         return {"success": True, "path": str(output_wav), "duration_sec": probe_duration(output_wav), "provider": "macos_say", "quality_tier": "legacy_os_tts", "license": "generated_local_system_tts"}
 
+    # Linux espeak-ng / espeak fallback
+    espeak_bin = shutil.which("espeak-ng") or shutil.which("espeak")
+    if espeak_bin and shutil.which("ffmpeg"):
+        try:
+            raw_tmp = output_wav.with_suffix(".espeak.wav")
+            subprocess.run([espeak_bin, "-s", str(rate_wpm), "-w", str(raw_tmp), clean_text], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if raw_tmp.exists() and raw_tmp.stat().st_size > 256:
+                subprocess.run(["ffmpeg", "-y", "-i", str(raw_tmp), "-ar", "44100", "-ac", "2", str(output_wav)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                raw_tmp.unlink(missing_ok=True)
+                return {"success": True, "path": str(output_wav), "duration_sec": probe_duration(output_wav), "provider": "linux_espeak", "license": "generated_local_system_tts"}
+        except Exception:
+            pass
+
     words = max(1, len(clean_text.split()))
     dur = max(1.5, round(words / 2.6, 2))
     subprocess.run(

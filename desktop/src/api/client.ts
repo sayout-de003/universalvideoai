@@ -1,6 +1,9 @@
 import type { HealthResponse, ProjectDetail, ProjectSummary } from "../types/studio";
 
-export const API_BASE = "http://127.0.0.1:8420";
+export const API_BASE =
+  typeof window !== "undefined" && window.location.protocol.startsWith("http")
+    ? ""
+    : "http://127.0.0.1:8420";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {

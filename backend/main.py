@@ -589,3 +589,10 @@ def api_repair_animated_short(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "desktop" / "dist"
+if _FRONTEND_DIST.is_dir():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")
+
+
+
