@@ -91,11 +91,36 @@ def run_qa_verification(
     if expected_duration_sec > 1.0:
         err = abs(duration_sec - expected_duration_sec) / expected_duration_sec
         checks.append(QualityCheckItem(
-            name="duration_matches_edit",
+            name="duration_matches_target",
             category="visual",
-            passed=err <= 0.25,
-            details=f"Program {duration_sec:.1f}s vs edit {expected_duration_sec:.1f}s",
+            passed=err <= 0.15 or abs(duration_sec - expected_duration_sec) <= 2.0,
+            details=f"Program {duration_sec:.1f}s vs requested target {expected_duration_sec:.1f}s",
+            measured_value=round(duration_sec, 2),
         ))
+
+    # Visible animation check: ensure video is not a single frozen/static frame
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-i", str(video_path), "-vf", "freezedetect=n=0.001:d=1.5", "-an", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=45,
+        )
+        stderr_out = proc.stderr or ""
+        freeze_hits = re.findall(r"freeze_duration:\s*([0-9.]+)", stderr_out)
+        total_freeze = sum(float(x) for x in freeze_hits)
+        freeze_starts = re.findall(r"freeze_start:\s*([0-9.]+)", stderr_out)
+        if len(freeze_starts) > len(freeze_hits):
+            # Last freeze continued until EOF without emitting freeze_duration
+            total_freeze += max(0.0, duration_sec - float(freeze_starts[-1]))
+        motion_ok = duration_sec <= 1.5 or total_freeze < (duration_sec * 0.85)
+        checks.append(QualityCheckItem(
+            name="visible_animation_check",
+            category="visual",
+            passed=motion_ok,
+            details=f"Detected {total_freeze:.2f}s frozen/static out of {duration_sec:.2f}s",
+            measured_value=round(total_freeze, 2),
+        ))
+    except Exception as exc:
+        checks.append(QualityCheckItem(name="visible_animation_check", category="visual", passed=False, details=str(exc)))
 
     # Character identity drift & wardrobe consistency checks
     char_assets = list_character_assets(project_id)
@@ -123,14 +148,36 @@ def run_qa_verification(
                 details="Wardrobe specs consistent" if not wardrobe_failures else f"Wardrobe mismatch: {', '.join(wardrobe_failures)}",
             ))
 
-    # Dialogue completeness & lip-sync timing checks
+    # Dialogue completeness, non-silence & lip-sync timing checks
     if dialogue_tracks is not None:
         missing_dlg = [t.get("speaker", "unknown") for t in dialogue_tracks if not Path(str(t.get("wav_path", ""))).is_file()]
+        silent_dlg = []
+        for t in dialogue_tracks:
+            if t.get("provider") in ("silence", "none"):
+                silent_dlg.append(t.get("speaker", "unknown"))
+                continue
+            wp = Path(str(t.get("wav_path", "")))
+            if wp.is_file():
+                try:
+                    vp = subprocess.run(
+                        ["ffmpeg", "-i", str(wp), "-af", "volumedetect", "-vn", "-f", "null", "-"],
+                        capture_output=True, text=True, timeout=15,
+                    )
+                    mm = re.search(r"mean_volume:\s*(-?[0-9.]+)\s*dB", vp.stderr or "")
+                    if mm and float(mm.group(1)) <= -60.0:
+                        silent_dlg.append(t.get("speaker", "unknown"))
+                except Exception:
+                    pass
+        dlg_ok = len(dialogue_tracks) > 0 and len(missing_dlg) == 0 and len(silent_dlg) == 0
         checks.append(QualityCheckItem(
             name="dialogue_completeness",
             category="audio",
-            passed=len(dialogue_tracks) > 0 and len(missing_dlg) == 0,
-            details=f"{len(dialogue_tracks)} dialogue track(s) verified" if not missing_dlg else f"Missing dialogue WAV(s) for: {', '.join(missing_dlg)}",
+            passed=dlg_ok,
+            details=(
+                f"{len(dialogue_tracks)} non-silent dialogue track(s) verified"
+                if dlg_ok
+                else f"Dialogue failure (missing={missing_dlg}, silent={silent_dlg})"
+            ),
         ))
 
     if lip_sync_frames is not None:

@@ -24,8 +24,158 @@ _NOT_SPEAKERS = {
     "speech", "spoken", "narrator", "audio", "sound", "sfx", "text", "action",
     "description", "desc", "format", "runtime", "voice", "title", "screenplay",
     "scene", "transition", "music", "props", "prop", "location", "int", "ext",
-    "est", "on-screen text", "on screen text",
+    "est", "on-screen text", "on screen text", "guide", "style", "setting",
+    "characters", "character", "cast", "plot", "theme", "tone", "pacing",
+    "duration", "notes", "instructions", "instruction", "outline", "breakdown",
+    "beat", "beats", "prompt", "screenplay guide", "production guide",
 }
+
+
+def _parse_time_range(text: str) -> tuple[float | None, float | None, float | None]:
+    """Parse time ranges like '0–8 seconds', '0-8s', '8 to 15 sec' into (start, end, duration)."""
+    m = re.search(
+        r"(\d+(?:\.\d+)?)\s*(?:–|—|-|to)\s*(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
+        text or "",
+        flags=re.IGNORECASE,
+    )
+    if m:
+        start = float(m.group(1))
+        end = float(m.group(2))
+        if end > start:
+            return start, end, round(end - start, 2)
+    dur_m = re.search(r"\((\d+(?:\.\d+)?)\s*s\)", text or "", flags=re.IGNORECASE)
+    if dur_m:
+        return None, None, float(dur_m.group(1))
+    return None, None, None
+
+
+def _normalize_speaker_name(raw: str) -> str:
+    s = re.sub(r"^(?:the|a|an)\s+", "", (raw or "").strip(), flags=re.IGNORECASE)
+    s = re.sub(r"\s+", " ", s).strip(" :,-.")
+    if not s:
+        return ""
+    low = s.lower()
+    if low in ("boss", "manager", "supervisor"):
+        return "Boss"
+    if low in ("employee", "worker", "coworker", "colleague"):
+        return "Employee"
+    if low in ("friend", "buddy", "pal"):
+        return "Friend"
+    return s.title() if s.islower() or s.isupper() else s
+
+
+def _extract_quoted_dialogue_turns(body: str) -> list[dict[str, Any]]:
+    """Extract every quoted dialogue line in a scene with explicit speaker attribution."""
+    turns: list[dict[str, Any]] = []
+    text = body or ""
+    speech_verbs = (
+        r"(?:says|asks|replies|answers|whispers|shouts|yells|mutters|smirks|laughs|"
+        r"scoffs|groans|sighs|responds|adds|continues|exclaims|jokes|chimes\s+in)"
+    )
+    for idx, m in enumerate(re.finditer(r'["“]([^"”]{2,})["”]', text)):
+        line = re.sub(r"\s+", " ", m.group(1)).strip()
+        if len(line) < 2:
+            continue
+        # Look backward up to 90 chars (on same sentence/line) for speaker attribution
+        pre = text[max(0, m.start() - 90):m.start()]
+        pre_line = pre.splitlines()[-1] if pre.splitlines() else pre
+        speaker = ""
+        # Pattern 1: "Boss:" or "**Boss**:"
+        m_colon = re.search(r"(?:\*\*)?([A-Za-z][A-Za-z0-9 .'\-]{1,24}?)(?:\*\*)?\s*:\s*$", pre_line)
+        if m_colon:
+            cand = _normalize_speaker_name(m_colon.group(1))
+            if cand.lower() not in _NOT_SPEAKERS:
+                speaker = cand
+        # Pattern 2: "The Boss says," / "Friend smirks and says," / "Employee asks:"
+        if not speaker:
+            m_verb = re.search(
+                rf"(?:^|[.!?]\s+|\n|\b)(?:the\s+)?([A-Za-z][A-Za-z0-9 '\-]{{1,22}}?)\s+(?:[a-z]+\s+and\s+)?{speech_verbs}\b[^\"“\n]{{0,24}}$",
+                pre_line,
+                flags=re.IGNORECASE,
+            )
+            if m_verb:
+                cand = _normalize_speaker_name(m_verb.group(1))
+                if cand.lower() not in _NOT_SPEAKERS:
+                    speaker = cand
+        # Pattern 3: explicit role keyword anywhere near the end of pre_line
+        if not speaker:
+            m_role = list(re.finditer(r"\b(boss|employee|friend)\b", pre_line, flags=re.IGNORECASE))
+            if m_role:
+                speaker = _normalize_speaker_name(m_role[-1].group(1))
+        # Pattern 4: trailing attribution '"...", says the Boss'
+        if not speaker:
+            post = text[m.end():min(len(text), m.end() + 60)]
+            m_post = re.search(
+                rf"^\s*,?\s*(?:{speech_verbs}\s+)?(?:the\s+)?([A-Za-z][A-Za-z0-9 '\-]{{1,22}}?)(?:\s+{speech_verbs})?(?:[.!?\n]|$)",
+                post,
+                flags=re.IGNORECASE,
+            )
+            if m_post:
+                cand = _normalize_speaker_name(m_post.group(1))
+                if cand.lower() not in _NOT_SPEAKERS:
+                    speaker = cand
+
+        turns.append({
+            "speaker": speaker or "Narrator",
+            "line": line,
+            "order": idx,
+        })
+    return turns
+
+
+def _extract_character_and_scene_bible(text: str) -> dict[str, Any]:
+    """Extract character descriptions, wardrobe, props, setting, and animation style."""
+    low = (text or "").lower()
+    is_purple = "purple" in low
+    characters: list[dict[str, Any]] = []
+
+    if re.search(r"\bboss\b", low):
+        wardrobe = ["black tie"] if "black tie" in low else ["office shirt and tie"]
+        characters.append({
+            "name": "Boss",
+            "role": "boss",
+            "color": "purple" if is_purple else "stylized",
+            "wardrobe": wardrobe,
+            "props": [],
+            "expression": "serious" if "serious" in low else "stern",
+            "gestures": ["nervous_gesture"] if "nervous" in low else ["talk"],
+        })
+    if re.search(r"\bemployee\b", low):
+        wardrobe = ["blue ID card"] if "id card" in low or "blue id" in low else ["office lanyard"]
+        props = ["coffee cup"] if "coffee" in low else []
+        characters.append({
+            "name": "Employee",
+            "role": "employee",
+            "color": "purple" if is_purple else "stylized",
+            "wardrobe": wardrobe,
+            "props": props,
+            "expression": "shocked" if "shocked" in low or "spit" in low else "expressive",
+            "gestures": ["coffee_spit"] if "spit" in low else ["talk"],
+        })
+    if re.search(r"\bfriend\b", low):
+        wardrobe = ["headphones"] if "headphone" in low else ["casual jacket"]
+        characters.append({
+            "name": "Friend",
+            "role": "friend",
+            "color": "purple" if is_purple else "stylized",
+            "wardrobe": wardrobe,
+            "props": ["headphones"] if "headphone" in low else [],
+            "expression": "sarcastic" if "sarcastic" in low or "smirk" in low else "relaxed",
+            "gestures": ["raise_hand"] if "raise" in low or "hand" in low else ["talk"],
+        })
+
+    setting = "office break room" if ("break room" in low or "break-room" in low or "office" in low) else "studio"
+    env_props = [p for p in ("table", "chairs", "coffee cup", "coffee cups") if p in low]
+    anim_style = "3d_stylized" if any(k in low for k in ("3d", "pixar", "blender", "cgi")) else "auto"
+
+    return {
+        "character_bible": characters,
+        "environment_bible": {
+            "setting": setting,
+            "props": env_props,
+        },
+        "animation_style": anim_style,
+    }
 
 
 def extract_dialogue_turns(text: str) -> list[dict[str, str]]:
@@ -185,13 +335,22 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
         elif "male" in v_low and "female" not in v_low:
             header_voice_gender = "male"
 
+    bible = _extract_character_and_scene_bible(normalized)
+
+    # 3. Universal Scene Block Matching (including natural time-ranged headings like 'Scene 1 (0–8 seconds):' or '0-8 seconds:')
+    header_regex = re.compile(
+        r"(?:^|\n)\s*((?:##+\s*(?:SCENE|ACT)\b|(?:\(?\bACT\s+\d+.*?\bSCENE\s+\d+\)?)|SCENE\s+\d+|Scene\s+\d+|\[\s*SCENE\s+\d+\s*\]|\(\s*(?:ACT\s+\d+.*?)?Scene\s+\d+\s*\)|\d+\.\s*Scene\b|(?:\*\*)?\d+(?:\.\d+)?\s*(?:–|—|-|to)\s*\d+(?:\.\d+)?\s*(?:seconds?|secs?|s)\b|EXT\.|INT\.)[^\n]*)",
+        re.IGNORECASE,
+    )
+    headers = list(header_regex.finditer(normalized))
+
     dialogue_turns = extract_dialogue_turns(normalized)
     has_voice_field = bool(re.search(
         r"(?:\*\*)?\s*(?:NARRATION|VO|DIALOGUE|SPEECH|SPOKEN)\b[^:\n]{0,24}:",
         normalized,
         flags=re.IGNORECASE,
     ))
-    if len(dialogue_turns) >= 2 and not has_voice_field:
+    if len(dialogue_turns) >= 2 and not has_voice_field and len(headers) <= 1:
         scenes = _scenes_from_dialogue_turns(dialogue_turns)
         if not title:
             names = []
@@ -210,15 +369,10 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
             "voice_gender": header_voice_gender,
             "character_name": dialogue_turns[0]["speaker"][:48],
             "character_description": f"Two people in a 2D animated conversation: {title}.",
+            **bible,
             "scenes": scenes,
         }
 
-    # 3. Universal Scene Block Matching
-    header_regex = re.compile(
-        r"(?:^|\n)\s*((?:##+\s*(?:SCENE|ACT)\b|(?:\(?\bACT\s+\d+.*?\bSCENE\s+\d+\)?)|SCENE\s+\d+|Scene\s+\d+|\[\s*SCENE\s+\d+\s*\]|\(\s*(?:ACT\s+\d+.*?)?Scene\s+\d+\s*\)|\d+\.\s*Scene\b|EXT\.|INT\.)[^\n]*)",
-        re.IGNORECASE,
-    )
-    headers = list(header_regex.finditer(normalized))
     blocks: list[tuple[str, str]] = []
 
     if headers:
@@ -226,29 +380,43 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
             h_line = h.group(1).strip()
             body_start = h.end()
             body_end = headers[idx + 1].start() if idx + 1 < len(headers) else len(normalized)
-            blocks.append((h_line, normalized[body_start:body_end].strip()))
+            body_text = normalized[body_start:body_end].strip()
+            # If the scene heading line itself has inline prose after ':' (e.g. 'Scene 1 (0–8 seconds): Boss says, "..."'),
+            # split the heading from the inline body so quotes and visual descriptions are parsed!
+            m_inline = re.match(
+                r"^((?:##+\s*)?(?:SCENE|ACT)\s+\d+(?:\s*\([^)]*\))?|\d+(?:\.\d+)?\s*(?:–|—|-|to)\s*\d+(?:\.\d+)?\s*(?:seconds?|secs?|s)\b)\s*:\s*(.+)$",
+                h_line,
+                flags=re.IGNORECASE,
+            )
+            if m_inline:
+                h_line = m_inline.group(1).strip()
+                inline_rest = m_inline.group(2).strip()
+                body_text = f"{inline_rest}\n{body_text}".strip() if body_text else inline_rest
+            blocks.append((h_line, body_text))
     elif re.search(r"(?:\*\*)?\s*(?:VISUAL|NARRATION|VO|DIALOGUE|NARRATOR)\s*:", normalized, flags=re.IGNORECASE):
         # Structured content without explicit scene headings - parse as single/intro scene
         blocks.append(("Scene 1", normalized))
 
     scenes: list[dict[str, Any]] = []
+    running_cursor = 0.0
 
     for idx, (h_line, body) in enumerate(blocks):
-        # Extract explicit duration from header if present, e.g. (5.3s)
-        sc_dur: float | None = None
-        dur_m = re.search(r"\((\d+(?:\.\d+)?)\s*s\)", h_line, flags=re.IGNORECASE)
-        if dur_m:
-            sc_dur = float(dur_m.group(1))
+        # Extract explicit time range (e.g. 0–8 seconds) or duration (5.3s) from header or body start
+        start_sec, end_sec, sc_dur = _parse_time_range(h_line)
+        if sc_dur is None and body:
+            first_body_line = body.splitlines()[0] if body.splitlines() else ""
+            start_sec, end_sec, sc_dur = _parse_time_range(first_body_line)
 
         # Extract clean scene title
-        title_raw = re.sub(r"\((\d+(?:\.\d+)?)\s*s\)", "", h_line, flags=re.IGNORECASE)
+        title_raw = re.sub(r"\(\d+(?:\.\d+)?\s*(?:–|—|-|to)\s*\d+(?:\.\d+)?\s*(?:seconds?|secs?|s)\)", "", h_line, flags=re.IGNORECASE)
+        title_raw = re.sub(r"\((\d+(?:\.\d+)?)\s*s\)", "", title_raw, flags=re.IGNORECASE)
         title_raw = re.sub(
             r"^(?:##+\s*)?(?:\(?\s*(?:ACT\s+\d+.*?)?SCENE\s+\d+\s*\)?|\[\s*SCENE\s+\d+\s*\]|\d+\.\s*Scene\b)[:\-]?\s*",
             "",
             title_raw,
             flags=re.IGNORECASE,
         )
-        sc_title = clean_markdown_inline(title_raw).strip("()").strip() or f"Scene {idx + 1}"
+        sc_title = clean_markdown_inline(title_raw).strip("():- ").strip() or f"Scene {idx + 1}"
 
         def _extract_field(field_regex: str) -> str:
             # Check bolded **FIELD:** or unbolded FIELD:
@@ -263,17 +431,35 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
         camera_raw = _extract_field(r"CAMERA")
         lighting = _extract_field(r"LIGHTING") or "dramatic_cinematic"
         raw_narration = _extract_field(r"NARRATION\s*/?\s*VO|NARRATION|VO|DIALOGUE|SPEECH|SPOKEN|NARRATOR|AUDIO")
-        if not raw_narration:
-            # Look for dialogue in quotes or character speech
-            m_quote = re.search(r'"([^"]{6,})"', body)
-            if m_quote:
-                raw_narration = m_quote.group(1).strip()
-            else:
-                m_colon_dial = re.search(r"(?:^[A-Z0-9_\s]{2,20}\s*:\s*)([^\n]+)", body, flags=re.MULTILINE)
-                if m_colon_dial:
-                    raw_narration = m_colon_dial.group(1).strip()
 
-        narration = sanitize_spoken_voiceover(raw_narration, default="") if raw_narration else ""
+        # Extract ALL quoted dialogue turns in this scene with explicit speaker attribution
+        scene_turns = _extract_quoted_dialogue_turns(body)
+        if not scene_turns and raw_narration:
+            # Check if raw_narration has explicit speaker turns
+            inline_turns = extract_dialogue_turns(raw_narration)
+            if inline_turns:
+                scene_turns = [{"speaker": t["speaker"], "line": t["line"], "order": i} for i, t in enumerate(inline_turns)]
+
+        if scene_turns:
+            # Preserve exact user-written dialogue verbatim (joined for compatibility, turns kept separate)
+            narration = " ".join(t["line"] for t in scene_turns)
+        elif raw_narration:
+            narration = sanitize_spoken_voiceover(raw_narration, default="")
+        else:
+            m_colon_dial = re.search(r"(?:^([A-Z0-9_\s]{2,20})\s*:\s*)([^\n]+)", body, flags=re.MULTILINE)
+            if m_colon_dial:
+                cand_label = re.sub(r"\s+", " ", m_colon_dial.group(1).strip().lower())
+                if cand_label not in _NOT_SPEAKERS and "screenplay" not in cand_label and "guide" not in cand_label:
+                    narration = sanitize_spoken_voiceover(m_colon_dial.group(2).strip(), default="")
+                else:
+                    narration = ""
+            else:
+                narration = ""
+
+        # If natural scene prose (no explicit VISUAL: field), preserve body as visual_description
+        if not visual and body:
+            visual = re.sub(r"\s+", " ", body).strip()[:600]
+
         on_screen_text = _extract_field(r"ON-SCREEN\s+TEXT|TEXT") or sc_title
         on_screen_text = clean_markdown_inline(on_screen_text)
         sound_cue = _extract_field(r"SOUND|SFX") or "ambient_swell"
@@ -285,6 +471,12 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
             w_count = len(narration.split()) if narration else 0
             sc_dur = max(3.0, round(w_count / 2.5 + 0.8, 1)) if w_count > 0 else 4.0
 
+        if start_sec is None:
+            start_sec = round(running_cursor, 2)
+        if end_sec is None:
+            end_sec = round(start_sec + sc_dur, 2)
+        running_cursor = end_sec
+
         shot_type, cam_angle, cam_move = "medium", "eye_level", "slow_push_in"
         if camera_raw:
             parts = [p.strip() for p in re.split(r"[/,|]", camera_raw) if p.strip()]
@@ -295,8 +487,12 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
             if len(parts) >= 3:
                 cam_move = parts[2]
 
-        # Determine voice casting per scene
-        if header_voice_gender == "male":
+        # Determine primary speaker/voice casting per scene
+        if scene_turns:
+            speaker_name = scene_turns[0]["speaker"]
+            voice_gender = "male"
+            voice_id = "character_1"
+        elif header_voice_gender == "male":
             voice_gender = "male"
             voice_id = "narrator_deep"
             speaker_name = "Narrator (Male — ChristopherNeural)"
@@ -313,8 +509,12 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
             "order_index": idx,
             "title": sc_title.title() if sc_title.isupper() else sc_title,
             "purpose": f"Deliver '{sc_title}'",
+            "start_sec": start_sec,
+            "end_sec": end_sec,
             "narration_segment": narration,
-            "visual_description": visual or f"Cinematic 2D/3D animated scene depicting {sc_title}.",
+            "dialogue_turns": scene_turns,
+            "dialogue": scene_turns,
+            "visual_description": visual or f"Cinematic 3D animated scene depicting {sc_title}.",
             "shot_type": shot_type,
             "camera_angle": cam_angle,
             "camera_movement": cam_move,
@@ -322,22 +522,28 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
             "composition": "rule_of_thirds",
             "on_screen_text": on_screen_text[:48],
             "sound_cue": sound_cue,
-            "duration_sec": max(2.5, sc_dur),
+            "duration_sec": max(2.0, sc_dur),
             "transition": "cut" if idx == 0 else ("smoothleft", "dissolve", "circleopen", "smoothright")[(idx - 1) % 4],
             "voice_gender": voice_gender,
             "voice_id": voice_id,
             "speaker_name": speaker_name,
-            "preferred_scene_engine": "hyperframes" if idx % 3 != 1 else "remotion",
-            "animation_theme": "painterly_parallax" if "historic" in (visual + lighting).lower() else "pixar_character_world",
+            "preferred_scene_engine": "blender" if bible["animation_style"] == "3d_stylized" else ("hyperframes" if idx % 3 != 1 else "remotion"),
+            "animation_theme": "3d_stylized" if bible["animation_style"] == "3d_stylized" else ("painterly_parallax" if "historic" in (visual + lighting).lower() else "pixar_character_world"),
             "silent_action_sec": 0.4,
             "pause_sec": 0.3,
         })
 
     if not title:
-        # Derive a clean concise title from first sentence without markdown clutter
+        # Derive a clean concise title from first sentence without markdown clutter or screenplay-guide framing
         cleaned = re.sub(r"\*\*[A-Z/\s-]+\s*:\*\*", " ", normalized)
         cleaned = re.sub(r"##+\s*SCENE\s+\d+\s*:", " ", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\*Format:[^*]+\*", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(
+            r"^(?:\d+\s*-?\s*(?:sec|second|seconds|min|minute|minutes|s)\s+)?(?:screenplay|production|video|script)\s+(?:guide|instructions?|outline|template|prompt)\b[:\-]?\s*",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
         cleaned = clean_markdown_inline(cleaned)
         words = [w for w in cleaned.split() if w]
         title = " ".join(words[:7]).title() if words else "Untitled Production"
@@ -363,6 +569,7 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
         "voice_gender": header_voice_gender,
         "character_name": title[:48],
         "character_description": character_desc,
+        **bible,
         "scenes": scenes,
     }
 

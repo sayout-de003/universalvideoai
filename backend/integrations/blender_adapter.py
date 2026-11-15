@@ -118,19 +118,47 @@ def render_blender_scene(
     render_samples = int(scene.get("render_samples") or b_settings.get("samples") or 32)
 
     mesh_raw = scene.get("character_mesh_path") or b_settings.get("character_mesh_path")
+    characters_spec: list[dict[str, Any]] = list(scene.get("characters") or [])
     char_mesh = Path(mesh_raw) if mesh_raw else (_DEFAULT_HUMANOID if _DEFAULT_HUMANOID.is_file() else None)
-    if char_mesh and not char_mesh.is_file():
-        return {"ok": False, "status": "FAILED", "engine": "blender", "reason": f"Character mesh not found: {char_mesh}"}
+
+    if characters_spec:
+        for c_spec in characters_spec:
+            c_path = Path(str(c_spec.get("mesh_path") or ""))
+            if not c_path.is_file():
+                return {
+                    "ok": False,
+                    "status": "FAILED",
+                    "engine": "blender",
+                    "reason": f"Missing required character asset for '{c_spec.get('name', 'unknown')}': {c_path}",
+                }
+    elif not char_mesh or not char_mesh.is_file():
+        return {
+            "ok": False,
+            "status": "FAILED",
+            "engine": "blender",
+            "reason": f"Required character rig/mesh not found (capsule fallback disabled): {char_mesh}",
+        }
+
+    env_blend_raw = scene.get("environment_blend_path") or b_settings.get("environment_blend_path")
+    env_blend = Path(env_blend_raw) if env_blend_raw else None
+    if env_blend and not env_blend.is_file():
+        return {"ok": False, "status": "FAILED", "engine": "blender", "reason": f"Environment .blend not found: {env_blend}"}
 
     lip_sync_frames = scene.get("lip_sync_frames") or []
     lip_sync_json = work_dir / "lip_sync.json"
     lip_sync_json.write_text(json.dumps(lip_sync_frames), encoding="utf-8")
+
+    chars_json = work_dir / "characters.json"
+    chars_json.write_text(json.dumps(characters_spec), encoding="utf-8")
 
     picture = str(scene.get("picture_prompt") or scene.get("visual_description") or scene.get("title") or "3D Scene")
     hue = abs(hash(picture)) % 360
     r, g, b = colorsys.hsv_to_rgb(hue / 360.0, 0.45, 0.85)
     char_posix = char_mesh.as_posix() if char_mesh else ""
     char_ext = char_mesh.suffix.lower() if char_mesh else ""
+    env_blend_posix = env_blend.as_posix() if env_blend else ""
+    shot_type = str(scene.get("shot_type") or "medium").strip().lower()
+    active_speaker = str(scene.get("speaker_name") or "").strip()
 
     bpy_script = work_dir / "scene_render.py"
     bpy_script.write_text(
@@ -150,6 +178,8 @@ elif wanted_engine == "WORKBENCH" and "BLENDER_WORKBENCH" in engines:
     scene.render.engine = "BLENDER_WORKBENCH"
 else:
     scene.render.engine = 'BLENDER_EEVEE_NEXT' if 'BLENDER_EEVEE_NEXT' in engines else ('BLENDER_EEVEE' if 'BLENDER_EEVEE' in engines else 'CYCLES')
+    if hasattr(scene, "eevee") and hasattr(scene.eevee, "taa_render_samples"):
+        scene.eevee.taa_render_samples = min(8, max(4, {render_samples}))
 
 scene.render.resolution_x = {width}
 scene.render.resolution_y = {height}
@@ -197,131 +227,268 @@ def make_mat(name, color, metallic=0.1, roughness=0.5, emission=None):
     return m
 
 # Environment builder
-bpy.ops.mesh.primitive_plane_add(size=30, location=(0, 0, 0))
-ground = bpy.context.active_object
-ground.name = "Ground"
-
-if "{env_type}" == "room":
-    ground.data.materials.append(make_mat("GroundMat", (0.14, 0.15, 0.17), roughness=0.75))
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 4.5, 2.5))
-    wall_back = bpy.context.active_object
-    wall_back.scale = (14.0, 0.3, 5.0)
-    wall_back.data.materials.append(make_mat("WallMat", (0.22, 0.24, 0.28), roughness=0.6))
-
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(-6.5, 0, 2.5))
-    wall_left = bpy.context.active_object
-    wall_left.scale = (0.3, 10.0, 5.0)
-    wall_left.data.materials.append(make_mat("WallLeftMat", (0.19, 0.21, 0.25), roughness=0.6))
-
-    for px in (-4.0, 4.0):
-        bpy.ops.mesh.primitive_cylinder_add(radius=0.25, depth=5.0, location=(px, 3.8, 2.5))
-        pil = bpy.context.active_object
-        pil.data.materials.append(make_mat(f"Pillar_{{px}}", (0.35, 0.36, 0.40), metallic=0.3, roughness=0.35))
-elif "{env_type}" == "cyberpunk":
-    ground.data.materials.append(make_mat("CyberFloor", (0.05, 0.06, 0.08), metallic=0.85, roughness=0.18))
-    for idx, sx in enumerate([-4.5, 4.5]):
-        bpy.ops.mesh.primitive_cube_add(size=1, location=(sx, 2.5, 2.5))
-        strip = bpy.context.active_object
-        strip.scale = (0.2, 6.0, 5.0)
-        strip.data.materials.append(make_mat(f"Strip_{{idx}}", (0.02, 0.03, 0.05), metallic=0.5, roughness=0.3))
-        # Neon edge accent
-        bpy.ops.mesh.primitive_cylinder_add(radius=0.06, depth=5.0, location=(sx + (0.15 if sx < 0 else -0.15), 2.5, 2.5))
-        neon_rod = bpy.context.active_object
-        neon_rod.data.materials.append(make_mat(f"NeonRod_{{idx}}", (0.1, 0.9, 1.0) if sx < 0 else (1.0, 0.1, 0.7), emission=(0.1, 0.9, 1.0) if sx < 0 else (1.0, 0.1, 0.7)))
-elif "{env_type}" == "isometric":
-    ground.data.materials.append(make_mat("IsoGround", (0.11, 0.13, 0.16), roughness=0.45))
-    bpy.ops.mesh.primitive_cylinder_add(radius=1.8, depth=0.25, location=(0, 0, 0.125))
-    ped = bpy.context.active_object
-    ped.data.materials.append(make_mat("Pedestal", (0.25, 0.28, 0.34), metallic=0.4, roughness=0.25))
-elif "{env_type}" == "minimal":
-    ground.data.materials.append(make_mat("VoidGround", (0.10, 0.10, 0.12), roughness=0.8))
+env_blend_path = "{env_blend_posix}"
+if env_blend_path:
+    with bpy.data.libraries.load(env_blend_path, link=False) as (data_from, data_to):
+        data_to.collections = list(data_from.collections)
+    for col in data_to.collections:
+        if col:
+            bpy.context.scene.collection.children.link(col)
 else:
-    # Outdoor environmental markers
-    ground.data.materials.append(make_mat("GroundMat", (0.12, 0.22, 0.11), roughness=0.85))
-    for idx, (tx, ty) in enumerate([(-3.5, 3.2), (3.5, 4.0), (-5.0, -1.5), (4.8, -2.0)]):
-        bpy.ops.mesh.primitive_cylinder_add(radius=0.18, depth=2.2, location=(tx, ty, 1.1))
-        trunk = bpy.context.active_object
-        trunk.data.materials.append(make_mat(f"Trunk_{{idx}}", (0.24, 0.15, 0.09), roughness=0.85))
-        bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=0.95, location=(tx, ty, 2.6))
-        crown = bpy.context.active_object
-        crown.data.materials.append(make_mat(f"Crown_{{idx}}", (0.11, 0.32, 0.13), roughness=0.7))
+    bpy.ops.mesh.primitive_plane_add(size=30, location=(0, 0, 0))
+    ground = bpy.context.active_object
+    ground.name = "Ground"
 
-# Import rigged humanoid character
-char_path = "{char_posix}"
-char_ext = "{char_ext}"
-imported_objs = []
-if char_path:
-    before = set(bpy.data.objects)
-    if char_ext in (".glb", ".gltf"):
-        bpy.ops.import_scene.gltf(filepath=char_path)
-    elif char_ext == ".fbx":
-        bpy.ops.import_scene.fbx(filepath=char_path)
-    elif char_ext == ".blend":
-        bpy.ops.wm.open_mainfile(filepath=char_path)
-    imported_objs = [o for o in bpy.data.objects if o not in before]
+    if "{env_type}" == "room":
+        ground.data.materials.append(make_mat("GroundMat", (0.14, 0.15, 0.17), roughness=0.75))
+        bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 4.5, 2.5))
+        wall_back = bpy.context.active_object
+        wall_back.scale = (14.0, 0.3, 5.0)
+        wall_back.data.materials.append(make_mat("WallMat", (0.22, 0.24, 0.28), roughness=0.6))
 
-armatures = [o for o in imported_objs if o.type == "ARMATURE"] or [o for o in bpy.data.objects if o.type == "ARMATURE"]
-meshes = [o for o in imported_objs if o.type == "MESH"] or [o for o in bpy.data.objects if o.type == "MESH" and o.name != "Ground"]
+        bpy.ops.mesh.primitive_cube_add(size=1, location=(-6.5, 0, 2.5))
+        wall_left = bpy.context.active_object
+        wall_left.scale = (0.3, 10.0, 5.0)
+        wall_left.data.materials.append(make_mat("WallLeftMat", (0.19, 0.21, 0.25), roughness=0.6))
 
-# Create root empty so character faces camera and walks cleanly
-bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
-char_root = bpy.context.active_object
-char_root.name = "CharacterRoot"
+        for px in (-4.0, 4.0):
+            bpy.ops.mesh.primitive_cylinder_add(radius=0.25, depth=5.0, location=(px, 3.8, 2.5))
+            pil = bpy.context.active_object
+            pil.data.materials.append(make_mat(f"Pillar_{{px}}", (0.35, 0.36, 0.40), metallic=0.3, roughness=0.35))
+    elif "{env_type}" == "cyberpunk":
+        ground.data.materials.append(make_mat("CyberFloor", (0.05, 0.06, 0.08), metallic=0.85, roughness=0.18))
+        for idx, sx in enumerate([-4.5, 4.5]):
+            bpy.ops.mesh.primitive_cube_add(size=1, location=(sx, 2.5, 2.5))
+            strip = bpy.context.active_object
+            strip.scale = (0.2, 6.0, 5.0)
+            strip.data.materials.append(make_mat(f"Strip_{{idx}}", (0.02, 0.03, 0.05), metallic=0.5, roughness=0.3))
+            bpy.ops.mesh.primitive_cylinder_add(radius=0.06, depth=5.0, location=(sx + (0.15 if sx < 0 else -0.15), 2.5, 2.5))
+            neon_rod = bpy.context.active_object
+            neon_rod.data.materials.append(make_mat(f"NeonRod_{{idx}}", (0.1, 0.9, 1.0) if sx < 0 else (1.0, 0.1, 0.7), emission=(0.1, 0.9, 1.0) if sx < 0 else (1.0, 0.1, 0.7)))
+    elif "{env_type}" == "isometric":
+        ground.data.materials.append(make_mat("IsoGround", (0.11, 0.13, 0.16), roughness=0.45))
+        bpy.ops.mesh.primitive_cylinder_add(radius=1.8, depth=0.25, location=(0, 0, 0.125))
+        ped = bpy.context.active_object
+        ped.data.materials.append(make_mat("Pedestal", (0.25, 0.28, 0.34), metallic=0.4, roughness=0.25))
+    elif "{env_type}" == "minimal":
+        ground.data.materials.append(make_mat("VoidGround", (0.10, 0.10, 0.12), roughness=0.8))
+    else:
+        ground.data.materials.append(make_mat("GroundMat", (0.12, 0.22, 0.11), roughness=0.85))
+        for idx, (tx, ty) in enumerate([(-3.5, 3.2), (3.5, 4.0), (-5.0, -1.5), (4.8, -2.0)]):
+            bpy.ops.mesh.primitive_cylinder_add(radius=0.18, depth=2.2, location=(tx, ty, 1.1))
+            trunk = bpy.context.active_object
+            trunk.data.materials.append(make_mat(f"Trunk_{{idx}}", (0.24, 0.15, 0.09), roughness=0.85))
+            bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=0.95, location=(tx, ty, 2.6))
+            crown = bpy.context.active_object
+            crown.data.materials.append(make_mat(f"Crown_{{idx}}", (0.11, 0.32, 0.13), roughness=0.7))
 
-if armatures:
-    arm = armatures[0]
-    arm.parent = char_root
-elif meshes:
-    for m in meshes:
-        m.parent = char_root
-else:
-    bpy.ops.mesh.primitive_capsule_add(radius=0.25, depth=1.5, location=(0, 0, 0.9))
-    hero = bpy.context.active_object
-    hero.data.materials.append(make_mat("FallbackChar", ({r:.3f}, {g:.3f}, {b:.3f}), roughness=0.4))
-    hero.parent = char_root
+with open("{chars_json.as_posix()}", "r", encoding="utf-8") as cf:
+    chars_spec = json.load(cf)
 
-# Load walk/idle/run action from imported actions if available
-anim_target = "{anim_name}".lower()
-if armatures:
-    arm = armatures[0]
-    if not arm.animation_data:
-        arm.animation_data_create()
-    chosen_action = None
-    for act in bpy.data.actions:
-        if anim_target in act.name.lower():
-            chosen_action = act
-            break
-    if chosen_action is None and bpy.data.actions:
-        chosen_action = bpy.data.actions[0]
-    if chosen_action is not None:
-        arm.animation_data.action = chosen_action
-
-# Animate character translation across the set for walk/run
-if anim_target in ("walk", "run"):
-    dist = 2.6 if anim_target == "walk" else 4.2
-    char_root.location = (0, -dist * 0.5, 0)
-    char_root.keyframe_insert(data_path="location", frame=1)
-    char_root.location = (0, dist * 0.5, 0)
-    char_root.keyframe_insert(data_path="location", frame={total_frames})
-    act = char_root.animation_data.action if char_root.animation_data else None
-    if act and hasattr(act, "fcurves"):
-        for fc in act.fcurves:
-            for kp in fc.keyframe_points:
-                kp.interpolation = "LINEAR"
-
-# Facial / lip-sync shape-key animation if lip_sync_frames provided
 with open("{lip_sync_json.as_posix()}", "r", encoding="utf-8") as lf:
     lip_frames = json.load(lf)
 
-if lip_frames and meshes:
-    for m in meshes:
-        if m.data.shape_keys and m.data.shape_keys.key_blocks:
-            for kb in m.data.shape_keys.key_blocks:
-                if any(k in kb.name.lower() for k in ("jaw", "mouth", "viseme", "open")):
-                    for entry in lip_frames:
-                        fr = max(1, min({total_frames}, int(entry.get("frame", 1))))
-                        kb.value = float(entry.get("open", 0.0))
-                        kb.keyframe_insert(data_path="value", frame=fr)
+bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 1.35))
+char_root = bpy.context.active_object
+char_root.name = "CharacterRoot"
+
+loaded_chars = {{}}  # name_lower -> {{"armature": obj, "meshes": [obj], "root": obj}}
+
+if chars_spec:
+    for c_spec in chars_spec:
+        c_name = str(c_spec.get("name") or "Character")
+        c_path = str(c_spec.get("mesh_path") or "")
+        before = set(bpy.data.objects)
+        if c_path.lower().endswith(".blend"):
+            with bpy.data.libraries.load(c_path, link=False) as (data_from, data_to):
+                data_to.collections = list(data_from.collections)
+            for col in data_to.collections:
+                if col:
+                    bpy.context.scene.collection.children.link(col)
+        elif c_path.lower().endswith((".glb", ".gltf")):
+            bpy.ops.import_scene.gltf(filepath=c_path)
+        elif c_path.lower().endswith(".fbx"):
+            bpy.ops.import_scene.fbx(filepath=c_path)
+
+        new_objs = [o for o in bpy.data.objects if o not in before]
+        c_arms = [o for o in new_objs if o.type == "ARMATURE"]
+        c_meshes = [o for o in new_objs if o.type == "MESH"]
+        if not c_arms and not c_meshes:
+            raise RuntimeError(f"No armature or mesh loaded for {{c_name}} from {{c_path}}")
+
+        bpy.ops.object.empty_add(type="PLAIN_AXES", location=tuple(c_spec.get("location") or (0, 0, 0)))
+        c_empty = bpy.context.active_object
+        c_empty.name = f"{{c_name}}_Root"
+        c_empty.rotation_euler = (0, 0, math.radians(float(c_spec.get("rotation_z", 0.0))))
+        if c_arms:
+            c_arms[0].parent = c_empty
+        else:
+            for m in c_meshes:
+                m.parent = c_empty
+
+        # Pose seated if requested
+        if c_spec.get("seated") and c_arms:
+            arm = c_arms[0]
+            bpy.context.view_layer.objects.active = arm
+            bpy.ops.object.mode_set(mode="POSE")
+            for bname, rot_x in (("Hips", 0.0), ("Thigh.L", -1.35), ("Thigh.R", -1.35), ("Shin.L", 1.35), ("Shin.R", 1.35)):
+                pb = arm.pose.bones.get(bname)
+                if pb:
+                    pb.rotation_mode = "XYZ"
+                    pb.rotation_euler = (rot_x, 0, 0)
+            pb_hips = arm.pose.bones.get("Hips")
+            if pb_hips:
+                pb_hips.location = (0, 0, -0.34)
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+        # Per-character gestures & expressions
+        gesture = str(c_spec.get("gesture") or "").lower()
+        expr = str(c_spec.get("expression") or "").lower()
+        if c_arms:
+            arm = c_arms[0]
+            bpy.context.view_layer.objects.active = arm
+            bpy.ops.object.mode_set(mode="POSE")
+            if gesture == "nervous_gesture":
+                for fr, val in ((1, 0.0), (15, 0.18), (30, -0.15), (45, 0.16), ({total_frames}, 0.0)):
+                    f_clamped = max(1, min({total_frames}, fr))
+                    for bname in ("Forearm.L", "Forearm.R", "Head"):
+                        pb = arm.pose.bones.get(bname)
+                        if pb:
+                            pb.rotation_mode = "XYZ"
+                            pb.rotation_euler = (val * 0.6, 0, val)
+                            pb.keyframe_insert(data_path="rotation_euler", frame=f_clamped)
+            elif gesture == "raise_hand":
+                pb_ua = arm.pose.bones.get("UpperArm.R")
+                pb_fa = arm.pose.bones.get("Forearm.R")
+                raise_start = max(1, int({total_frames} * 0.45))
+                for fr, ua_rot, fa_rot in ((1, (0, 0, 0), (0, 0, 0)), (raise_start, (0, 0, 0), (0, 0, 0)), (min({total_frames}, raise_start + 18), (-1.4, 0, -0.3), (-0.5, 0, 0)), ({total_frames}, (-1.4, 0, -0.3), (-0.5, 0, 0))):
+                    if pb_ua:
+                        pb_ua.rotation_mode = "XYZ"
+                        pb_ua.rotation_euler = ua_rot
+                        pb_ua.keyframe_insert(data_path="rotation_euler", frame=fr)
+                    if pb_fa:
+                        pb_fa.rotation_mode = "XYZ"
+                        pb_fa.rotation_euler = fa_rot
+                        pb_fa.keyframe_insert(data_path="rotation_euler", frame=fr)
+            elif gesture == "coffee_spit":
+                pb_head = arm.pose.bones.get("Head")
+                spit_start = max(1, int({total_frames} * 0.35))
+                spit_peak = min({total_frames}, spit_start + 10)
+                if pb_head:
+                    pb_head.rotation_mode = "XYZ"
+                    for fr, rx in ((1, 0.0), (spit_start, 0.15), (spit_peak, -0.38), ({total_frames}, -0.15)):
+                        pb_head.rotation_euler = (rx, 0, 0)
+                        pb_head.keyframe_insert(data_path="rotation_euler", frame=fr)
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+        if gesture == "coffee_spit":
+            for m in c_meshes:
+                if "coffeespit" in m.name.lower():
+                    spit_start = max(1, int({total_frames} * 0.35))
+                    spit_peak = min({total_frames}, spit_start + 10)
+                    for fr, sc_v in ((1, 0.001), (spit_start, 0.001), (spit_peak, 1.5), (min({total_frames}, spit_peak + 15), 0.001)):
+                        m.scale = (sc_v, sc_v * 2.0, sc_v)
+                        m.keyframe_insert(data_path="scale", frame=fr)
+
+        if expr:
+            for m in c_meshes:
+                if m.data.shape_keys and m.data.shape_keys.key_blocks:
+                    kb = m.data.shape_keys.key_blocks.get(expr)
+                    if kb:
+                        kb.value = 0.85
+                        kb.keyframe_insert(data_path="value", frame=1)
+
+        loaded_chars[c_name.lower()] = {{"armature": c_arms[0] if c_arms else None, "meshes": c_meshes, "root": c_empty}}
+else:
+    # Single character import (strict: never fall back to capsule)
+    char_path = "{char_posix}"
+    char_ext = "{char_ext}"
+    imported_objs = []
+    if char_path:
+        before = set(bpy.data.objects)
+        if char_ext in (".glb", ".gltf"):
+            bpy.ops.import_scene.gltf(filepath=char_path)
+        elif char_ext == ".fbx":
+            bpy.ops.import_scene.fbx(filepath=char_path)
+        elif char_ext == ".blend":
+            with bpy.data.libraries.load(char_path, link=False) as (data_from, data_to):
+                data_to.collections = list(data_from.collections)
+            for col in data_to.collections:
+                if col:
+                    bpy.context.scene.collection.children.link(col)
+        imported_objs = [o for o in bpy.data.objects if o not in before]
+
+    armatures = [o for o in imported_objs if o.type == "ARMATURE"] or [o for o in bpy.data.objects if o.type == "ARMATURE"]
+    meshes = [o for o in imported_objs if o.type == "MESH"] or [o for o in bpy.data.objects if o.type == "MESH" and o.name != "Ground"]
+
+    if not armatures and not meshes:
+        raise RuntimeError("No character armature or mesh loaded; primitive capsule fallback is disabled.")
+
+    if armatures:
+        arm = armatures[0]
+        arm.parent = char_root
+    else:
+        for m in meshes:
+            m.parent = char_root
+
+    anim_target = "{anim_name}".lower()
+    if armatures:
+        arm = armatures[0]
+        if not arm.animation_data:
+            arm.animation_data_create()
+        chosen_action = None
+        for act in bpy.data.actions:
+            if anim_target in act.name.lower():
+                chosen_action = act
+                break
+        if chosen_action is None and bpy.data.actions:
+            chosen_action = bpy.data.actions[0]
+        if chosen_action is not None:
+            arm.animation_data.action = chosen_action
+
+    if anim_target in ("walk", "run"):
+        dist = 2.6 if anim_target == "walk" else 4.2
+        char_root.location = (0, -dist * 0.5, 0)
+        char_root.keyframe_insert(data_path="location", frame=1)
+        char_root.location = (0, dist * 0.5, 0)
+        char_root.keyframe_insert(data_path="location", frame={total_frames})
+        act = char_root.animation_data.action if char_root.animation_data else None
+        if act and hasattr(act, "fcurves"):
+            for fc in act.fcurves:
+                for kp in fc.keyframe_points:
+                    kp.interpolation = "LINEAR"
+
+    loaded_chars["default"] = {{"armature": armatures[0] if armatures else None, "meshes": meshes, "root": char_root}}
+
+# Per-speaker lip-sync shape-key animation
+if lip_frames:
+    for entry in lip_frames:
+        fr = max(1, min({total_frames}, int(entry.get("frame", 1))))
+        sp_key = str(entry.get("speaker") or "default").strip().lower()
+        target_bundle = loaded_chars.get(sp_key) or loaded_chars.get("default")
+        if not target_bundle and loaded_chars:
+            # Match partial speaker name
+            for k, v in loaded_chars.items():
+                if k in sp_key or sp_key in k:
+                    target_bundle = v
+                    break
+        if not target_bundle:
+            continue
+        viseme_name = str(entry.get("viseme") or "jaw_open")
+        open_val = float(entry.get("open", 0.0))
+        for m in target_bundle["meshes"]:
+            if m.data.shape_keys and m.data.shape_keys.key_blocks:
+                kbs = m.data.shape_keys.key_blocks
+                if viseme_name in kbs:
+                    for v_kb_name in ("jaw_open", "viseme_AA", "viseme_EE", "viseme_OO", "viseme_FF", "viseme_MBP"):
+                        if v_kb_name in kbs:
+                            kbs[v_kb_name].value = open_val if v_kb_name == viseme_name else 0.0
+                            kbs[v_kb_name].keyframe_insert(data_path="value", frame=fr)
+                else:
+                    for kb in kbs:
+                        if any(k in kb.name.lower() for k in ("jaw", "mouth", "viseme", "open")):
+                            kb.value = open_val
+                            kb.keyframe_insert(data_path="value", frame=fr)
 
 # Lighting Setup based on preset
 light_mode = "{lighting_preset}"
@@ -376,7 +543,21 @@ else:
 
 # Camera Choreography & Tracking
 motion = "{camera_motion}"
-if motion == "orbit":
+shot_t = "{shot_type}"
+cam_target = char_root
+if chars_spec and "{active_speaker}".lower() in loaded_chars and ("close" in shot_t or "reaction" in shot_t):
+    bpy.ops.object.empty_add(type="PLAIN_AXES", location=loaded_chars["{active_speaker}".lower()]["root"].location)
+    cam_target = bpy.context.active_object
+    cam_target.location.z = 1.32
+
+if "wide" in shot_t or "group" in shot_t:
+    start_pos = (0.2, -3.9, 1.85)
+    end_pos = (-0.2, -3.4, 1.72)
+elif "close" in shot_t or "reaction" in shot_t:
+    tx, ty, _ = cam_target.location
+    start_pos = (tx * 0.45, ty - 2.1, 1.50)
+    end_pos = (tx * 0.55, ty - 1.75, 1.45)
+elif motion == "orbit":
     start_pos = (3.2, -3.6, 1.75)
     end_pos = (-2.8, -3.6, 1.75)
 elif motion == "pan":
@@ -397,7 +578,7 @@ bpy.ops.object.camera_add(location=start_pos)
 cam = bpy.context.active_object
 scene.camera = cam
 track = cam.constraints.new(type="TRACK_TO")
-track.target = char_root
+track.target = cam_target
 track.track_axis = "TRACK_NEGATIVE_Z"
 track.up_axis = "UP_Y"
 
@@ -416,7 +597,7 @@ bpy.ops.render.render(animation=True)
             [str(blender_bin), "-b", "--python-exit-code", "1", "-P", str(bpy_script)],
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=600,
         )
         if proc.returncode != 0:
             return {"ok": False, "status": "FAILED", "engine": "blender", "reason": (proc.stderr or proc.stdout)[-500:]}

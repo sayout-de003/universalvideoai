@@ -184,6 +184,9 @@ class AntigravityAdapter:
             chain.append("cloud_video")
         if requested_engine in ("threejs", "blender", "remotion", "hyperframes"):
             chain.append(requested_engine)
+        if requested_engine == "blender":
+            # Never silently replace requested 3D Blender rendering with 2D or archival footage
+            return ["blender"]
         if cat in ("3d_animation", "3d_render", "architecture", "product_demo"):
             for eng in ("blender", "threejs"):
                 if eng not in chain:

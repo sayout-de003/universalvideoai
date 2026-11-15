@@ -64,16 +64,8 @@ def _extract_subject(prompt: str) -> str:
 
     first_line = prompt.strip().splitlines()[0] if prompt.strip() else ""
     s = clean_markdown_inline(first_line)
-    s = re.sub(r"^[#*\s]+(?:screenplay\s*:\s*)?", "", s, flags=re.IGNORECASE)
-    s = re.sub(r"\*Format:.*$", "", s, flags=re.IGNORECASE).split("*")[0].split("|")[0].strip()
+    s = re.sub(r"\*Format:.*$", "", s, flags=re.IGNORECASE).strip()
     s = _strip_prompt_framing(s)
-    s = re.sub(r"\b\d+\s*-\s*(?:second|sec|minute|min|hour|hr)s?\b", " ", s, flags=re.IGNORECASE)
-    s = re.sub(
-        r"\b(?:faceless|youtube|shorts?|reels?|explaining|explain|word-by-word|captions?)\b",
-        " ",
-        s,
-        flags=re.IGNORECASE,
-    )
     s = re.sub(r"^(?:SCREENPLAY\s*:|TITLE\s*:|SCENE\s*\d*\s*[:\-]?)\s*", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\s+", " ", s).strip().rstrip(".!?*#")
     return s[:90] if len(s) >= 3 else "an everyday conversation"
@@ -83,32 +75,23 @@ def _strip_prompt_framing(raw: str) -> str:
     s = raw.strip()
     from backend.services.document_parser import clean_markdown_inline
 
-    # Strip guide, guideline, and meta-prompt framing first
-    s = re.sub(
-        r"(?i)\b(?:\d+\s*-?\s*(?:sec|second|seconds|min|minute|minutes|s)\s*)?(?:screenplay|script|video|animation)?\s*(?:guide|guideline|guidelines|instruction|instructions|breakdown|prompt|template|spec|specification|structure)\b[:\-]?\s*",
-        " ",
-        s,
-    )
-
     # Check for 'about ...', 'discussing ...', 'regarding ...', 'on the topic of ...'
     m = re.search(r"\b(?:about|discussing|regarding|exploring|on the topic of)\s+([^\n.]+)", s, flags=re.IGNORECASE)
     if m:
         topic = m.group(1).strip()
-        topic = re.sub(r"\b(?:in|for|with)?\s*(?:2d|3d|animated|animation|video|film|a script|script|guide)\b", "", topic, flags=re.IGNORECASE).strip()
-        topic = re.sub(r"\b(?:three|two|3|2)?\s*(?:people|characters|friends|persons)\s+talking(?:\s+to\s+each\s+other)?\b", "", topic, flags=re.IGNORECASE).strip()
+        topic = re.sub(r"\b(?:in|for|with)?\s*(?:2d|3d|animated|animation|video|film|a script|script)\b", "", topic, flags=re.IGNORECASE).strip()
         cleaned_topic = clean_markdown_inline(topic)
-        cleaned_topic = re.sub(r"^(?:on|about|for|of|with|in)\s+", "", cleaned_topic, flags=re.IGNORECASE).strip()
         if len(cleaned_topic) >= 3:
             return cleaned_topic
 
     s = re.sub(r"^(?:i want to (?:create|make|produce)|create|make|produce|generate|build|write|tell)\s+(?:an?|the)?\s*", "", s, flags=re.IGNORECASE)
-    s = re.sub(r"\b\d+\s*-?\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)\b", "", s, flags=re.IGNORECASE)
-    s = re.sub(r"\b(?:three|two|3|2)?\s*(?:people|characters|friends|persons)\s+talking(?:\s+to\s+each\s+other)?\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b\d+\s*-?\s*(?:seconds?|secs?|sec|minutes?|mins?|hours?|hrs?)\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b(?:two\s+or\s+more|three|four|2|3|4|two|multiple|several)?\s*(?:people|characters|friends|coworkers|persons)\s+talking(?:\s+to\s+each\s+other)?\b", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\b(?:2d|3d|pixar|anime|cartoon|animated|hand-drawn|whiteboard)\s*(?:animation|video|film|short)?\b", "", s, flags=re.IGNORECASE)
-    s = re.sub(r"\b(?:video|film|screenplay|story|animation|explainer|reel|short|documentary|script|a script|guide|guideline)\b", "", s, flags=re.IGNORECASE)
-    s = re.sub(r"^(?:on|about|for|of|with|in)\s+", "", s, flags=re.IGNORECASE).strip()
+    s = re.sub(r"\b(?:video|film|screenplay|story|animation|explainer|reel|short|documentary|script|a script|guide|instructions?|template|outline|breakdown|prompt|notes?)\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"^(?:on|about|for|of|with|in|:|-)+\s*", "", s, flags=re.IGNORECASE).strip()
     s = re.sub(r"\s+(?:on|about|for|of|with|in)$", "", s, flags=re.IGNORECASE).strip()
-    s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"\s+", " ", s).strip(" :,-")
     return s
 
 
@@ -464,47 +447,101 @@ def _build_specialist_scenes_offline(
 
 
 def _dialogue_cast(scenes: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
-    """Keep the names written in the script. Do not invent a cast."""
+    """Keep the names written in the script and assign distinct persistent voice profiles."""
     generic = ("narrator", "anchor", "co-narrator", "lead voice")
     names: list[str] = []
     for sc in scenes:
+        for turn in sc.get("dialogue_turns") or sc.get("dialogue") or []:
+            t_name = str(turn.get("speaker") or "").strip()
+            if t_name and not any(g in t_name.lower() for g in generic) and t_name not in names:
+                names.append(t_name)
         name = str(sc.get("speaker_name") or "").strip()
-        if not name or any(g in name.lower() for g in generic):
-            continue
-        if name not in names:
+        if name and not any(g in name.lower() for g in generic) and name not in names:
             names.append(name)
+
+    _voice_slots = [
+        ("male", "character_1"),
+        ("male", "character_2"),
+        ("male", "character_3"),
+        ("female", "character_4"),
+    ]
     cast: dict[str, dict[str, str]] = {}
     for index, name in enumerate(names):
-        if index % 2 == 0:
-            cast[name] = {"voice_gender": "male", "voice_id": "character_1", "speaker_name": name}
+        low = name.lower()
+        if low == "boss":
+            gender, vid = "male", "character_1"
+        elif low == "employee":
+            gender, vid = "male", "character_2"
+        elif low == "friend":
+            gender, vid = "male", "character_3"
         else:
-            cast[name] = {"voice_gender": "female", "voice_id": "character_2", "speaker_name": name}
+            gender, vid = _voice_slots[index % len(_voice_slots)]
+        cast[name] = {"voice_gender": gender, "voice_id": vid, "speaker_name": name}
     return cast
+
+
+def validate_screenplay_completeness(
+    scenes: list[dict[str, Any]],
+    source_text: str = "",
+) -> dict[str, Any]:
+    """Verify all requested scenes and quoted dialogue beats are present before rendering."""
+    errors: list[str] = []
+    if not scenes:
+        errors.append("No scenes generated from screenplay.")
+
+    # Count expected scenes from explicit 'Scene N' or time-range headings in source_text
+    expected_scene_headers = re.findall(
+        r"(?:^|\n)\s*(?:##+\s*SCENE\s+\d+|SCENE\s+\d+|Scene\s+\d+|\d+(?:\.\d+)?\s*(?:–|—|-|to)\s*\d+(?:\.\d+)?\s*(?:seconds?|secs?|s)\b)",
+        source_text or "",
+        flags=re.IGNORECASE,
+    )
+    if len(expected_scene_headers) >= 2 and len(scenes) < len(expected_scene_headers):
+        errors.append(f"Expected {len(expected_scene_headers)} scenes from script, got {len(scenes)}.")
+
+    # Count expected quoted dialogue beats in source_text
+    expected_quotes = [
+        re.sub(r"\s+", " ", q).strip()
+        for q in re.findall(r'["“]([^"”]{2,})["”]', source_text or "")
+        if len(q.strip()) >= 2
+    ]
+    actual_turns: list[str] = []
+    for sc in scenes:
+        turns = sc.get("dialogue_turns") or sc.get("dialogue") or []
+        if turns:
+            for t in turns:
+                line = str(t.get("line") or "").strip()
+                if line:
+                    actual_turns.append(line)
+        elif sc.get("narration_segment"):
+            actual_turns.append(str(sc["narration_segment"]).strip())
+
+    if expected_quotes:
+        joined_actual = " ".join(actual_turns).lower()
+        missing_quotes = [q for q in expected_quotes if q.lower() not in joined_actual]
+        if missing_quotes:
+            errors.append(f"Missing dialogue beat(s): {missing_quotes}")
+
+    return {
+        "passed": len(errors) == 0,
+        "errors": errors,
+        "scene_count": len(scenes),
+        "expected_scene_count": len(expected_scene_headers) or len(scenes),
+        "dialogue_turn_count": len(actual_turns),
+        "expected_dialogue_count": len(expected_quotes) or len(actual_turns),
+    }
 
 
 def _conversation_requested(prompt: str, format_key: str) -> bool:
     """Return True when the prompt or format calls for a multi-character dialogue."""
-    if format_key in ("character_dialogue_2d", "character_conversation"):
+    if format_key == "character_dialogue_2d":
         return True
     low = prompt.lower()
-    return any(
-        k in low
-        for k in (
-            "two people talking",
-            "two characters talking",
-            "three people talking",
-            "three characters talking",
-            "3 people talking",
-            "3 characters talking",
-            "people talking",
-            "characters talking",
-            "three people are talking",
-            "dialogue between",
-            "conversation between",
-            "talking to each other",
-            "people are talking",
-        )
-    )
+    return bool(re.search(
+        r"\b(?:two\s+or\s+more\s+people|two\s+people|2\s+people|three\s+people|3\s+people|"
+        r"people\s+talking|characters\s+talking|friends\s+talking|group\s+conversation|"
+        r"dialogue\s+between|conversation\s+between|talking\s+to\s+each\s+other)\b",
+        low,
+    ))
 
 
 def _build_conversation_scenes(
@@ -515,97 +552,55 @@ def _build_conversation_scenes(
     visual_style: str | None = None,
     prompt: str = "",
 ) -> list[dict[str, Any]]:
-    """Build multi-character dialogue scenes with distinct voices and character presence."""
-    topic = subject.strip() or "workplace job layoffs in the modern era"
-    if re.fullmatch(r"(?:two people talking|three people talking|a script|an everyday conversation)", topic, re.IGNORECASE):
-        topic = "the modern wave of corporate layoffs"
-    
-    is_trio = any(k in prompt.lower() for k in ("three", "3 people", "3 characters", "trio", "three people"))
-    is_layoff = any(k in (prompt + " " + topic).lower() for k in ("layoff", "playoff", "job layout", "modern area", "modern era", "severance", "headcount"))
-    
-    if is_trio:
-        trio_chars = ["Alex", "Maya", "Liam"]
-        if is_layoff:
-            turns = [
-                ("Alex", "male", "character_1", 0, "Did you see the announcement about the modern corporate job layoffs? Not playoffs—real workforce reductions happening across the tech area."),
-                ("Maya", "female", "character_2", 1, "I did, Alex. Entire departments were notified with zero warning as companies scramble to cut operational overhead."),
-                ("Liam", "male", "character_3", 2, "It is a tough reality of modern business restructuring. The key right now is documenting our core impact and staying resilient."),
-                ("Alex", "male", "character_1", 0, "Exactly, Liam. We need to upgrade our skills, support our displaced colleagues, and adapt to these modern market shifts."),
-                ("Maya", "female", "character_2", 1, "Agreed. By staying informed, communicating openly, and looking out for one another, we can navigate through any corporate layoff."),
-                ("Liam", "male", "character_3", 2, "Well said. Let's make sure our team has a clear strategy and keeps moving forward together."),
-            ]
-        else:
-            turns = [
-                ("Alex", "male", "character_1", 0, f"Wait, did you two look into {topic} this morning?"),
-                ("Maya", "female", "character_2", 1, f"I did, and honestly, {topic} is moving faster than either of us expected."),
-                ("Liam", "male", "character_3", 2, f"It impacts our entire team. We need a clear, coordinated strategy on {topic}."),
-                ("Alex", "male", "character_1", 0, f"Agreed Liam. Where do we even start with {topic}?"),
-                ("Maya", "female", "character_2", 1, f"Right here, one step at a time, before {topic} catches everyone off guard."),
-                ("Liam", "male", "character_3", 2, f"Count me in. Together, our group can master {topic} completely."),
-            ]
-        eng, theme = _select_scene_animation_mode(0, num_scenes, fmt_spec["writer_type"], visual_style=visual_style or "2d_illustrated")
-        scenes: list[dict[str, Any]] = []
-        shot_styles = [
-            ("medium_group_shot", "eye_level", "three_shot_balanced"),
-            ("medium_close", "eye_level", "rule_of_thirds"),
-            ("medium_two_shot", "slight_low_angle", "two_shot_focus"),
-            ("wide_hero", "eye_level", "three_shot_balanced"),
+    """Build alternating multi-character dialogue scenes (2 or 3+ speakers) with distinct voices."""
+    topic = _strip_prompt_framing(subject).strip() or "what matters most"
+    if len(topic) < 3 or re.fullmatch(r"(?:two people talking|a script|an everyday conversation|guide|screenplay)", topic, re.IGNORECASE):
+        topic = "what happened earlier today"
+    three_plus = bool(re.search(r"\b(?:three|3|two\s+or\s+more|group|more\s+people)\b", (prompt or "").lower()))
+    if three_plus:
+        turns = [
+            ("Alex", "Maya", "male", "character_1", f"Wait, did both of you actually look into {topic} this morning?"),
+            ("Maya", "Alex", "female", "character_2", f"I did, and honestly, {topic} is moving way faster than any of us expected."),
+            ("Sam", "Maya", "male", "character_3", f"Hold on, that changes everything. Where do we even start with {topic}?"),
+            ("Alex", "Sam", "male", "character_1", f"Right here, one clear step at a time, before {topic} catches everyone off guard."),
+            ("Maya", "Sam", "female", "character_2", f"Deal. Once we lay out what we found on {topic}, everyone will finally get it."),
+            ("Sam", "Alex", "male", "character_3", f"Alright, count me in. Let us tackle {topic} together right now."),
         ]
-        for i in range(max(3, num_scenes)):
-            speaker, gender, voice_id, spk_idx, line = turns[i % len(turns)]
-            narr = _trim_to_word_budget(line, max(8, words_per_scene))
-            st_shot, st_cam, st_comp = shot_styles[i % len(shot_styles)]
-            scenes.append({
-                "title": f"Scene {i + 1}: {speaker}'s Perspective",
-                "purpose": f"Three-person animated dialogue exchange ({speaker} speaking)",
-                "narration_segment": narr,
-                "visual_description": f"2D animated modern conference room with floor-to-ceiling glass windows and digital wall telemetry. Three colleagues (Alex in navy suit, Maya in magenta blazer, Liam in emerald vest with glasses) sit at a sleek boardroom table with open laptops. {speaker} gestures expressively with realistic lip-sync while the others listen.",
-                "shot_type": st_shot,
-                "camera_angle": st_cam,
-                "camera_movement": "subtle_push_in",
-                "lighting": "modern_office_key",
-                "composition": st_comp,
-                "on_screen_text": f"{speaker}: Modern Restructuring",
-                "sound_cue": "ambient_office_tone",
-                "transition": "cut" if i == 0 else _TRANSITION_CYCLE[(i - 1) % len(_TRANSITION_CYCLE)],
-                "voice_gender": gender,
-                "voice_id": voice_id,
-                "speaker_name": speaker,
-                "character_name": speaker,
-                "three_people": True,
-                "characters": trio_chars,
-                "speaking_index": spk_idx,
-                "preferred_scene_engine": "hyperframes",
-                "animation_theme": "2d_illustrated",
-                "visual_style": visual_style or "2d_illustrated",
-                "silent_action_sec": 0.35,
-                "pause_sec": 0.35,
-            })
-        return scenes
-
-    turns = [
-        ("Alex", "Maya", "male", "character_1", f"Wait, did you really look into {topic} this morning?"),
-        ("Maya", "Alex", "female", "character_2", f"I did, and honestly, {topic} is moving faster than either of us expected."),
-        ("Alex", "Maya", "male", "character_1", f"That changes everything. Where do we even start with {topic}?"),
-        ("Maya", "Alex", "female", "character_2", f"Right here, one clear step at a time, before {topic} catches everyone off guard."),
-        ("Alex", "Maya", "male", "character_1", f"Alright, I am in. Let us tackle {topic} together."),
-        ("Maya", "Alex", "female", "character_2", f"Deal. Once we share what we found on {topic}, people will actually listen."),
-    ]
+    else:
+        turns = [
+            ("Alex", "Maya", "male", "character_1", f"Wait, did you really look into {topic} this morning?"),
+            ("Maya", "Alex", "female", "character_2", f"I did, and honestly, {topic} is moving faster than either of us expected."),
+            ("Alex", "Maya", "male", "character_1", f"That changes everything. Where do we even start with {topic}?"),
+            ("Maya", "Alex", "female", "character_2", f"Right here, one clear step at a time, before {topic} catches everyone off guard."),
+            ("Alex", "Maya", "male", "character_1", f"Alright, I am in. Let us tackle {topic} together."),
+            ("Maya", "Alex", "female", "character_2", f"Deal. Once we share what we found on {topic}, people will actually listen."),
+        ]
     eng, theme = _select_scene_animation_mode(0, num_scenes, fmt_spec["writer_type"], visual_style=visual_style or "2d_illustrated")
+    shot_cycle = (
+        ["medium_three_shot", "medium_close_speaker", "reaction_two_shot"]
+        if three_plus
+        else ["medium_two_shot", "medium_close_speaker", "reaction_two_shot"]
+    )
     scenes: list[dict[str, Any]] = []
     for i in range(max(2, num_scenes)):
         speaker, partner, gender, voice_id, line = turns[i % len(turns)]
+        third_char = next((c for c in ("Alex", "Maya", "Sam") if c not in (speaker, partner)), "") if three_plus else ""
         narr = _trim_to_word_budget(line, max(8, words_per_scene))
+        shot = shot_cycle[i % len(shot_cycle)] if i not in (0, num_scenes - 1) else shot_cycle[0]
         scenes.append({
-            "title": f"{speaker} & {partner}",
-            "purpose": "Two-character animated dialogue exchange",
+            "title": f"{speaker} & {partner}" if not third_char else f"{speaker}, {partner} & {third_char}",
+            "purpose": "Multi-character animated dialogue exchange",
             "narration_segment": narr,
-            "visual_description": f"2D animated two-shot of {speaker} and {partner} talking expressively about {topic}; {speaker} speaks while {partner} reacts.",
-            "shot_type": "medium_two_shot" if i in (0, num_scenes - 1) else "medium_close",
+            "visual_description": (
+                f"Modern office conference room {shot.replace('_', ' ')} with city skyline window, presentation screen, laptops and coffee mugs; "
+                f"{speaker} gestures expressively while speaking about {topic} and {partner}"
+                + (f" and {third_char} listen and react." if third_char else " listens and reacts.")
+            ),
+            "shot_type": shot,
             "camera_angle": "eye_level",
             "camera_movement": "subtle_push_in",
             "lighting": "warm_illustrated_key",
-            "composition": "two_shot_balanced",
+            "composition": "three_shot_conference" if three_plus else "two_shot_balanced",
             "on_screen_text": f"{speaker}: {topic[:36]}",
             "sound_cue": "ambient_room_tone",
             "transition": "cut" if i == 0 else _TRANSITION_CYCLE[(i - 1) % len(_TRANSITION_CYCLE)],
@@ -614,11 +609,12 @@ def _build_conversation_scenes(
             "speaker_name": speaker,
             "character_name": speaker,
             "partner_name": partner,
+            "third_character": third_char,
             "preferred_scene_engine": eng,
             "animation_theme": theme,
             "visual_style": visual_style or "2d_illustrated",
-            "silent_action_sec": 0.25,
-            "pause_sec": 0.25,
+            "silent_action_sec": 0.35,
+            "pause_sec": 0.35,
         })
     return scenes
 
@@ -640,9 +636,10 @@ def develop_and_write_screenplay(
 
     fmt_spec = get_format_spec(format_key)
     parsed_script = parse_structured_screenplay(uploaded_script or prompt)
+    raw_parsed_subj = _strip_prompt_framing(str(parsed_script.get("subject") or ""))
     subject = (
-        parsed_script.get("subject")
-        if parsed_script.get("is_structured") and parsed_script.get("subject")
+        raw_parsed_subj
+        if parsed_script.get("is_structured") and len(raw_parsed_subj) >= 3 and not raw_parsed_subj.lower().startswith("untitled")
         else _extract_subject(prompt)
     )
     target_dur = float(
@@ -653,14 +650,37 @@ def develop_and_write_screenplay(
     claims = research_claims or []
 
     source_text = uploaded_script or prompt
+    effective_visual_style = visual_style
+    if (not effective_visual_style or effective_visual_style == "auto") and parsed_script.get("animation_style") not in (None, "auto"):
+        effective_visual_style = parsed_script.get("animation_style")
+
     if parsed_script.get("is_structured") and parsed_script.get("scenes"):
         scenes = list(parsed_script["scenes"])
         author_mode = "user_structured_screenplay"
         dialogue_voices = _dialogue_cast(scenes)
         for i, sc in enumerate(scenes):
-            sc["narration_segment"] = sanitize_spoken_voiceover(sc.get("narration_segment", ""), default="")
+            turns = sc.get("dialogue_turns") or sc.get("dialogue") or []
+            if turns:
+                enriched_turns = []
+                for t in turns:
+                    sp = str(t.get("speaker") or "Narrator").strip()
+                    vc = dialogue_voices.get(sp) or {"voice_gender": "male", "voice_id": "character_1", "speaker_name": sp}
+                    enriched_turns.append({
+                        **t,
+                        "speaker": sp,
+                        "line": str(t.get("line") or "").strip(),
+                        "voice_id": vc["voice_id"],
+                        "voice_gender": vc["voice_gender"],
+                    })
+                sc["dialogue_turns"] = enriched_turns
+                sc["dialogue"] = enriched_turns
+                # Preserve exact user-written dialogue verbatim
+                sc["narration_segment"] = " ".join(t["line"] for t in enriched_turns if t["line"])
+            else:
+                sc["narration_segment"] = sanitize_spoken_voiceover(sc.get("narration_segment", ""), default="")
+
             cast = _cast_voice_for_scene(i, len(scenes), fmt_spec["writer_type"], source_text, voice_mode=voice_mode)
-            eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"], visual_style=visual_style)
+            eng, theme = _select_scene_animation_mode(i, len(scenes), fmt_spec["writer_type"], visual_style=effective_visual_style)
             speaker = str(sc.get("speaker_name") or "")
             if dialogue_voices and speaker in dialogue_voices and voice_mode not in ("male", "female"):
                 sc.update(dialogue_voices[speaker])
@@ -672,10 +692,10 @@ def develop_and_write_screenplay(
                 sc.setdefault("voice_gender", cast["voice_gender"])
                 sc.setdefault("voice_id", cast["voice_id"])
                 sc.setdefault("speaker_name", cast["speaker_name"])
-            if visual_style and visual_style != "auto":
+            if effective_visual_style and effective_visual_style != "auto":
                 sc["preferred_scene_engine"] = eng
                 sc["animation_theme"] = theme
-                sc["visual_style"] = visual_style
+                sc["visual_style"] = effective_visual_style
             else:
                 sc.setdefault("preferred_scene_engine", eng)
                 sc.setdefault("animation_theme", theme)
@@ -696,7 +716,7 @@ def develop_and_write_screenplay(
             scenes = _build_conversation_scenes(
                 subject,
                 fmt_spec,
-                max(3, num_scenes),
+                max(4, num_scenes),
                 words_per_scene,
                 visual_style=visual_style if visual_style and visual_style != "auto" else None,
                 prompt=prompt,
@@ -780,10 +800,16 @@ def develop_and_write_screenplay(
     else:
         char_desc = clean_markdown_inline(char_desc)[:240]
 
+    script_validation = validate_screenplay_completeness(scenes, source_text)
+
     return {
         "subject": subject,
         "character_name": clean_markdown_inline(str(parsed_script.get("character_name") or subject))[:48],
         "character_description": char_desc,
+        "character_bible": parsed_script.get("character_bible") or [],
+        "environment_bible": parsed_script.get("environment_bible") or {},
+        "animation_style": effective_visual_style or parsed_script.get("animation_style") or "auto",
+        "script_validation": script_validation,
         "format_spec": fmt_spec,
         "author_mode": author_mode,
         "logline": logline,

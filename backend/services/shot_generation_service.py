@@ -329,6 +329,8 @@ def generate_shot_for_scene(
     elif effective_engine == "opentoonz":
         effective_engine = "hyperframes"
         scene = {**scene, "visual_style": "cartoon_2d"}
+    elif str(scene.get("visual_style") or "").strip().lower() == "3d_stylized" and effective_engine not in ("blender", "threejs"):
+        effective_engine = "blender"
 
     # Enrich visual style and character continuity from project context if missing
     project_id = scene.get("project_id")
