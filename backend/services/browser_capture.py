@@ -169,6 +169,7 @@ def capture_html_to_mp4(
             proc = subprocess.run(
                 [
                     node_path,
+                    "--experimental-websocket",
                     str(script_path),
                     chrome_path,
                     str(html_path),
