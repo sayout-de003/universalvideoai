@@ -1,4 +1,4 @@
-import { Download, FileText, Clapperboard, Radio, Music, Scissors, MessageSquare, ArrowLeft } from "lucide-react";
+import { Download, FileText, Clapperboard, Radio, Music, Scissors, MessageSquare, ArrowLeft, Sparkles } from "lucide-react";
 import { progressOfDetail, timecode, generatedSeconds } from "../lib/progress";
 import type { ProjectDetail, StudioTab } from "../types/studio";
 
@@ -12,6 +12,7 @@ interface Props {
 const STEPS: Array<{ id: StudioTab; label: string; icon: typeof FileText }> = [
   { id: "script_room", label: "Script", icon: FileText },
   { id: "storyboard", label: "Storyboard", icon: Clapperboard },
+  { id: "hypit", label: "Hypit Studio", icon: Sparkles },
   { id: "backlot", label: "Produce", icon: Radio },
   { id: "audio", label: "Audio", icon: Music },
   { id: "editor", label: "Edit", icon: Scissors },

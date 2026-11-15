@@ -7,6 +7,7 @@ import { DirectorChatView } from "./components/DirectorChatView";
 import { ExportCenterView } from "./components/ExportCenterView";
 import { NewProjectView, type PendingRefUpload } from "./components/NewProjectView";
 import { ProjectHeader } from "./components/ProjectHeader";
+import { HypitStudioView } from "./components/HypitStudioView";
 import { ScriptRoomView } from "./components/ScriptRoomView";
 import { Sidebar } from "./components/Sidebar";
 import { StoryboardView } from "./components/StoryboardView";
@@ -15,7 +16,7 @@ import { VoiceCommandDialog } from "./components/VoiceCommandDialog";
 import { isIdle } from "./lib/progress";
 import type { HealthResponse, ProjectDetail, ProjectSummary, StudioTab } from "./types/studio";
 
-const PROJECT_TABS: StudioTab[] = ["director", "script_room", "storyboard", "backlot", "audio", "editor", "export"];
+const PROJECT_TABS: StudioTab[] = ["director", "script_room", "storyboard", "hypit", "backlot", "audio", "editor", "export"];
 
 export function App() {
   const [tab, setTab] = useState<StudioTab>("dashboard");
@@ -154,6 +155,7 @@ export function App() {
               {tab === "director" && <DirectorChatView project={activeProject} onSendMessage={async (msg, confirmed) => { const r = await studioClient.chatDirector(pid, msg, "text", confirmed); await refresh(); return r; }} />}
               {tab === "script_room" && <ScriptRoomView project={activeProject} onRefresh={refresh} onStartProduction={() => act(async () => { await studioClient.runProject(pid, false); await refresh(); setTab("backlot"); })} />}
               {tab === "storyboard" && <StoryboardView project={activeProject} onRefresh={refresh} onRegenerateScene={(sceneId, visualStyle) => act(async () => { await studioClient.regenerateScene(pid, { scene_id: sceneId, ...(visualStyle ? { visual_style: visualStyle } : {}) }); await refresh(); }, "Scene regenerated. Your manual timeline edits were kept.")} />}
+              {tab === "hypit" && <HypitStudioView project={activeProject} onRefresh={refresh} />}
               {tab === "backlot" && (
                 <BacklotMonitorView
                   project={activeProject} liveEvents={liveEvents}

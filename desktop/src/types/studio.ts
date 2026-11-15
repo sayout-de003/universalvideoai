@@ -1,6 +1,6 @@
 export type StudioTab =
   | "dashboard" | "new_project" | "director" | "script_room" | "storyboard"
-  | "backlot" | "audio" | "editor" | "export";
+  | "hypit" | "backlot" | "audio" | "editor" | "export";
 
 export interface HealthResponse {
   ok: boolean;

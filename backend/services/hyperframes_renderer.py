@@ -89,9 +89,29 @@ _PIXAR_MOTION_TEMPLATE = r'''<!DOCTYPE html>
     height: 100%; width: 0%;
     background: linear-gradient(90deg, #f59e0b 0%, #38bdf8 55%, #818cf8 100%);
   }
+  body.hide-hud .hud {
+    display: none !important;
+  }
+  .cinematic-caption {
+    position: absolute;
+    bottom: 5vh;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(8, 10, 16, 0.72);
+    padding: 1.2vh 2.4vw;
+    border-radius: 12px;
+    color: #f8fafc;
+    font-size: 1.6vw;
+    font-weight: 600;
+    text-align: center;
+    max-width: 80vw;
+    line-height: 1.4;
+    pointer-events: none;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  }
 </style>
 </head>
-<body>
+<body class="__BODY_CLASS__">
   <canvas id="stageCanvas"></canvas>
   <div class="hud">
     <div class="top-row">
@@ -107,10 +127,13 @@ _PIXAR_MOTION_TEMPLATE = r'''<!DOCTYPE html>
       <div class="progress-track"><div class="progress-fill" id="bar"></div></div>
     </div>
   </div>
+  __CINEMATIC_CAPTION_HTML__
 <script>
 const DURATION = __DURATION__;
 const SCENE_SEED = __SEED__;
 const THEME = __THEME__;
+const SHOW_HUD = __SHOW_HUD__;
+const CHARACTER_META = __CHARACTER_META__;
 
 const canvas = document.getElementById("stageCanvas");
 const ctx = canvas.getContext("2d");
@@ -158,6 +181,18 @@ const PALETTES = {
     sun: "#e07a5f", mountFar: "#81b29a", mountMid: "#3d405b",
     groundTop: "#6d597a", groundBot: "#355070",
     suit: "#b56576", suitRim: "#eaac8b", accent: "#e07a5f"
+  },
+  anime: {
+    skyTop: "#0b1026", skyMid: "#1e1b4b", skyBot: "#fb7185",
+    sun: "#fef08a", mountFar: "#2e1065", mountMid: "#4338ca",
+    groundTop: "#1e1b4b", groundBot: "#020617",
+    suit: "#2563eb", suitRim: "#93c5fd", accent: "#f43f5e"
+  },
+  cartoon_2d: {
+    skyTop: "#38bdf8", skyMid: "#60a5fa", skyBot: "#fef08a",
+    sun: "#facc15", mountFar: "#4ade80", mountMid: "#22c55e",
+    groundTop: "#16a34a", groundBot: "#15803d",
+    suit: "#ef4444", suitRim: "#f87171", accent: "#f59e0b"
   }
 };
 const pal = PALETTES[THEME] || PALETTES.pixar_character_world;
@@ -335,6 +370,556 @@ function drawPixarCharacter(ctx, cx, cy, scale, t) {
   ctx.restore();
 }
 
+function drawAnimeCharacter(ctx, cx, cy, scale, t, p) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale * 1.05, scale * 1.05);
+
+  const stride = Math.sin(t * 5.8);
+  const bounce = Math.abs(Math.cos(t * 5.8)) * -7;
+  const breath = Math.sin(t * 2.8) * 2;
+  const wind = Math.sin(t * 4.2);
+
+  // Soft shadow
+  const shadowGrad = ctx.createRadialGradient(0, 96, 4, 0, 96, 52);
+  shadowGrad.addColorStop(0, "rgba(0, 0, 0, 0.65)");
+  shadowGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
+  ctx.fillStyle = shadowGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, 96, 48, 12, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.translate(0, bounce);
+
+  // Flowing Anime Cape / Scarf
+  ctx.save();
+  ctx.fillStyle = pal.accent;
+  ctx.beginPath();
+  ctx.moveTo(-16, -24);
+  ctx.quadraticCurveTo(-48 + wind * 14, -10 + bounce, -74 + wind * 24, 18 + wind * 8);
+  ctx.quadraticCurveTo(-46 + wind * 10, 8, -12, -8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // Back leg
+  ctx.save();
+  ctx.translate(-7, 36);
+  ctx.rotate(-stride * 0.44);
+  ctx.fillStyle = "#1e1b4b";
+  ctx.beginPath();
+  ctx.roundRect(-7, 0, 14, 52, 6);
+  ctx.fill();
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.roundRect(-6, 44, 20, 14, 4);
+  ctx.fill();
+  ctx.restore();
+
+  // Back arm
+  ctx.save();
+  ctx.translate(-14, -16);
+  ctx.rotate(stride * 0.52);
+  ctx.fillStyle = pal.suit;
+  ctx.beginPath();
+  ctx.roundRect(-6, 0, 13, 44, 6);
+  ctx.fill();
+  ctx.restore();
+
+  // Cel-shaded Torso / Anime Academy Coat
+  ctx.fillStyle = pal.suit;
+  ctx.beginPath();
+  ctx.moveTo(-20, -28 - breath * 0.3);
+  ctx.lineTo(20, -28 - breath * 0.3);
+  ctx.lineTo(24, 38);
+  ctx.lineTo(-24, 38);
+  ctx.closePath();
+  ctx.fill();
+
+  // Sharp cel-shade shadow
+  ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
+  ctx.beginPath();
+  ctx.moveTo(0, -28 - breath * 0.3);
+  ctx.lineTo(20, -28 - breath * 0.3);
+  ctx.lineTo(24, 38);
+  ctx.lineTo(4, 38);
+  ctx.closePath();
+  ctx.fill();
+
+  // Gold trim / buttons
+  ctx.fillStyle = "#fbbf24";
+  ctx.beginPath();
+  ctx.arc(-2, -12, 2.8, 0, Math.PI * 2);
+  ctx.arc(-2, 4, 2.8, 0, Math.PI * 2);
+  ctx.arc(-2, 20, 2.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Front leg
+  ctx.save();
+  ctx.translate(7, 36);
+  ctx.rotate(stride * 0.44);
+  ctx.fillStyle = "#312e81";
+  ctx.beginPath();
+  ctx.roundRect(-7, 0, 14, 52, 6);
+  ctx.fill();
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.roundRect(-6, 44, 20, 14, 4);
+  ctx.fill();
+  ctx.restore();
+
+  // Anime Head & Neck
+  ctx.save();
+  ctx.translate(0, -50 - breath * 0.5);
+  ctx.rotate(Math.sin(t * 2.2) * 0.05);
+
+  // Sharp anime jawline
+  ctx.fillStyle = "#fff1e6";
+  ctx.beginPath();
+  ctx.moveTo(-18, -20);
+  ctx.lineTo(18, -20);
+  ctx.lineTo(16, 6);
+  ctx.lineTo(0, 24);
+  ctx.lineTo(-16, 6);
+  ctx.closePath();
+  ctx.fill();
+
+  // Cel-shaded jaw shadow
+  ctx.fillStyle = "#fcd5ce";
+  ctx.beginPath();
+  ctx.moveTo(2, -4);
+  ctx.lineTo(16, 6);
+  ctx.lineTo(0, 24);
+  ctx.closePath();
+  ctx.fill();
+
+  // Large expressive anime eyes
+  const blink = (t % 3.0) > 2.82 ? 0.12 : 1.0;
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.ellipse(8, 2, 6, 8 * blink, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = pal.accent;
+  ctx.beginPath();
+  ctx.ellipse(9, 2, 4.5, 6.5 * blink, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#090d16";
+  ctx.beginPath();
+  ctx.arc(9.5, 2, 2.5 * blink, 0, Math.PI * 2);
+  ctx.fill();
+  if (blink > 0.4) {
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(7.8, -1, 1.6, 0, Math.PI * 2);
+    ctx.arc(11.2, 4, 1.0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.strokeStyle = "#090d16";
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(2, -3);
+  ctx.lineTo(15, -2);
+  ctx.stroke();
+
+  // Stylized anime hair spikes reacting to wind
+  ctx.fillStyle = "#1e1b4b";
+  ctx.beginPath();
+  ctx.moveTo(-22, -18);
+  ctx.lineTo(-32 + wind * 6, -34);
+  ctx.lineTo(-16, -32);
+  ctx.lineTo(-10 + wind * 4, -48);
+  ctx.lineTo(4, -36);
+  ctx.lineTo(18 + wind * 5, -46);
+  ctx.lineTo(18, -28);
+  ctx.lineTo(26 + wind * 4, -32);
+  ctx.lineTo(20, -12);
+  ctx.lineTo(14, 4);
+  ctx.lineTo(8, -12);
+  ctx.lineTo(-8, -14);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = pal.suitRim;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-12, -34);
+  ctx.lineTo(8, -32);
+  ctx.stroke();
+
+  ctx.restore();
+
+  // Front arm
+  ctx.save();
+  ctx.translate(12, -16);
+  ctx.rotate(-stride * 0.52);
+  ctx.fillStyle = pal.suit;
+  ctx.beginPath();
+  ctx.roundRect(-6, 0, 13, 44, 6);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.restore();
+}
+
+function drawCartoonCharacter(ctx, cx, cy, scale, t, p) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale * 1.08, scale * 1.08);
+
+  const stride = Math.sin(t * 6.6);
+  const bounce = Math.abs(Math.sin(t * 6.6)) * -12;
+  const squash = 1.0 + Math.sin(t * 6.6) * 0.08;
+  const stretch = 1.0 / squash;
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+  ctx.beginPath();
+  ctx.ellipse(0, 96, 52 + bounce * 0.5, 12, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.translate(0, bounce);
+  ctx.scale(stretch, squash);
+
+  ctx.strokeStyle = "#090d16";
+  ctx.lineWidth = 4;
+
+  // Back leg
+  ctx.save();
+  ctx.translate(-12, 34);
+  ctx.rotate(-stride * 0.5);
+  ctx.fillStyle = "#1e293b";
+  ctx.beginPath();
+  ctx.roundRect(-8, 0, 16, 46, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#facc15";
+  ctx.beginPath();
+  ctx.roundRect(-8, 38, 28, 18, 9);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // Back arm with glove
+  ctx.save();
+  ctx.translate(-18, -10);
+  ctx.rotate(stride * 0.6);
+  ctx.fillStyle = pal.suit;
+  ctx.beginPath();
+  ctx.roundRect(-8, 0, 16, 38, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(0, 36, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // Round cartoon body
+  ctx.fillStyle = pal.suit;
+  ctx.beginPath();
+  ctx.ellipse(0, 10, 26, 32, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Front leg
+  ctx.save();
+  ctx.translate(12, 34);
+  ctx.rotate(stride * 0.5);
+  ctx.fillStyle = "#1e293b";
+  ctx.beginPath();
+  ctx.roundRect(-8, 0, 16, 46, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#facc15";
+  ctx.beginPath();
+  ctx.roundRect(-8, 38, 28, 18, 9);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // Oversized round cartoon head
+  ctx.save();
+  ctx.translate(0, -42);
+  ctx.fillStyle = "#fef08a";
+  ctx.beginPath();
+  ctx.arc(0, 0, 32, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Eyes
+  const blink = (t % 2.5) > 2.35 ? 0.1 : 1.0;
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.ellipse(-10, -6, 9, 14 * blink, 0, 0, Math.PI * 2);
+  ctx.ellipse(10, -6, 9, 14 * blink, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  if (blink > 0.3) {
+    ctx.fillStyle = "#090d16";
+    ctx.beginPath();
+    ctx.arc(-8 + Math.sin(t * 3) * 2, -6, 4.5, 0, Math.PI * 2);
+    ctx.arc(12 + Math.sin(t * 3) * 2, -6, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(-9, -8, 1.8, 0, Math.PI * 2);
+    ctx.arc(11, -8, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Smile
+  ctx.beginPath();
+  ctx.arc(0, 8, 14, 0.15 * Math.PI, 0.85 * Math.PI);
+  ctx.stroke();
+  ctx.restore();
+
+  // Front arm
+  ctx.save();
+  ctx.translate(18, -10);
+  ctx.rotate(-stride * 0.6);
+  ctx.fillStyle = pal.suit;
+  ctx.beginPath();
+  ctx.roundRect(-8, 0, 16, 38, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(0, 36, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.restore();
+}
+
+function drawNapoleonCharacter(ctx, cx, cy, scale, t, p) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale * 1.05, scale * 1.05);
+
+  const stride = Math.sin(t * 4.6);
+  const bounce = Math.abs(Math.cos(t * 4.6)) * -6;
+  const breath = Math.sin(t * 2.4) * 2;
+  const wind = Math.sin(t * 3.8);
+
+  const shadowGrad = ctx.createRadialGradient(0, 96, 4, 0, 96, 56);
+  shadowGrad.addColorStop(0, "rgba(0, 0, 0, 0.62)");
+  shadowGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
+  ctx.fillStyle = shadowGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, 96, 54, 14, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.translate(0, bounce);
+
+  // General's Cloak blowing behind
+  ctx.save();
+  ctx.fillStyle = "#64748b";
+  ctx.beginPath();
+  ctx.moveTo(-18, -20);
+  ctx.quadraticCurveTo(-52 + wind * 16, 6 + wind * 8, -68 + wind * 20, 68);
+  ctx.lineTo(-24, 72);
+  ctx.lineTo(-12, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // Back leg
+  ctx.save();
+  ctx.translate(-8, 38);
+  ctx.rotate(-stride * 0.38);
+  ctx.fillStyle = "#f8fafc";
+  ctx.beginPath();
+  ctx.roundRect(-8, 0, 16, 38, 6);
+  ctx.fill();
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.roundRect(-8, 22, 22, 34, 4);
+  ctx.fill();
+  ctx.restore();
+
+  // Dark Green / Navy Imperial Guard Uniform
+  ctx.fillStyle = "#1e3a2b";
+  ctx.beginPath();
+  ctx.roundRect(-22, -26 - breath * 0.4, 44, 66 + breath * 0.4, 12);
+  ctx.fill();
+
+  // Red standing collar
+  ctx.fillStyle = "#dc2626";
+  ctx.beginPath();
+  ctx.roundRect(-16, -34 - breath * 0.5, 32, 10, 4);
+  ctx.fill();
+
+  // White waistcoat
+  ctx.fillStyle = "#f8fafc";
+  ctx.beginPath();
+  ctx.moveTo(-10, -24);
+  ctx.lineTo(10, -24);
+  ctx.lineTo(8, 28);
+  ctx.lineTo(-8, 28);
+  ctx.closePath();
+  ctx.fill();
+
+  // Gold epaulets
+  ctx.fillStyle = "#eab308";
+  ctx.beginPath();
+  ctx.ellipse(-20, -24, 8, 5, 0, 0, Math.PI * 2);
+  ctx.ellipse(20, -24, 8, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Front leg
+  ctx.save();
+  ctx.translate(8, 38);
+  ctx.rotate(stride * 0.38);
+  ctx.fillStyle = "#f8fafc";
+  ctx.beginPath();
+  ctx.roundRect(-8, 0, 16, 38, 6);
+  ctx.fill();
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.roundRect(-8, 22, 22, 34, 4);
+  ctx.fill();
+  ctx.restore();
+
+  // Head
+  ctx.save();
+  ctx.translate(0, -52 - breath * 0.6);
+  ctx.fillStyle = "#fed7aa";
+  ctx.beginPath();
+  ctx.arc(0, 0, 24, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.arc(7, 2, 2.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Iconic Black Bicorne Hat
+  ctx.fillStyle = "#090d16";
+  ctx.beginPath();
+  ctx.moveTo(-38, -6);
+  ctx.quadraticCurveTo(0, -38, 38, -6);
+  ctx.quadraticCurveTo(16, -14, 0, -12);
+  ctx.quadraticCurveTo(-16, -14, -38, -6);
+  ctx.closePath();
+  ctx.fill();
+
+  // French Tricolor Cockade
+  ctx.fillStyle = "#2563eb";
+  ctx.beginPath();
+  ctx.arc(14, -14, 5.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(14, -14, 3.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#dc2626";
+  ctx.beginPath();
+  ctx.arc(14, -14, 2.0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+
+  // Signature Napoleon Hand-in-Waistcoat pose
+  ctx.save();
+  ctx.translate(2, -4);
+  ctx.fillStyle = "#1e3a2b";
+  ctx.beginPath();
+  ctx.roundRect(-4, -14, 16, 28, 8);
+  ctx.fill();
+  ctx.fillStyle = "#fed7aa";
+  ctx.beginPath();
+  ctx.arc(4, 12, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.restore();
+}
+
+function drawRobotCharacter(ctx, cx, cy, scale, t, p) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale * 1.05, scale * 1.05);
+
+  const stride = Math.sin(t * 5.2);
+  const bounce = Math.abs(Math.sin(t * 5.2)) * -6;
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.beginPath();
+  ctx.ellipse(0, 96, 46, 12, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.translate(0, bounce);
+
+  // Metallic Legs
+  ctx.fillStyle = "#475569";
+  ctx.fillRect(-14, 38 - stride * 8, 10, 48);
+  ctx.fillRect(4, 38 + stride * 8, 10, 48);
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(-16, 80 - stride * 8, 14, 14);
+  ctx.fillRect(2, 80 + stride * 8, 14, 14);
+
+  // Metallic Torso with glowing core
+  ctx.fillStyle = "#334155";
+  ctx.beginPath();
+  ctx.roundRect(-22, -22, 44, 58, 10);
+  ctx.fill();
+  ctx.fillStyle = "#38bdf8";
+  ctx.beginPath();
+  ctx.arc(0, 6, 11, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Robot Head
+  ctx.fillStyle = "#475569";
+  ctx.beginPath();
+  ctx.roundRect(-20, -56, 40, 30, 8);
+  ctx.fill();
+
+  // Antenna
+  ctx.strokeStyle = "#94a3b8";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(0, -56);
+  ctx.lineTo(0, -72);
+  ctx.stroke();
+  ctx.fillStyle = (Math.sin(t * 8) > 0) ? "#ef4444" : "#f59e0b";
+  ctx.beginPath();
+  ctx.arc(0, -74, 4.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Visor
+  ctx.fillStyle = "#06b6d4";
+  ctx.beginPath();
+  ctx.roundRect(-14, -48, 28, 12, 4);
+  ctx.fill();
+
+  // Arms
+  ctx.fillStyle = "#64748b";
+  ctx.fillRect(-28, -16 + stride * 6, 8, 38);
+  ctx.fillRect(20, -16 - stride * 6, 8, 38);
+
+  ctx.restore();
+}
+
+function drawSceneCharacter(ctx, cx, cy, scale, t, p) {
+  const name = ((CHARACTER_META && CHARACTER_META.name) || "").toLowerCase();
+  const desc = ((CHARACTER_META && CHARACTER_META.desc) || "").toLowerCase();
+  const theme = (THEME || "").toLowerCase();
+
+  if (name.includes("napoleon") || desc.includes("napoleon") || desc.includes("bicorne")) {
+    drawNapoleonCharacter(ctx, cx, cy, scale, t, p);
+  } else if (name.includes("robot") || desc.includes("robot") || desc.includes("cyborg") || desc.includes("android")) {
+    drawRobotCharacter(ctx, cx, cy, scale, t, p);
+  } else if (theme === "anime" || desc.includes("anime") || desc.includes("manga")) {
+    drawAnimeCharacter(ctx, cx, cy, scale, t, p);
+  } else if (theme === "cartoon_2d" || desc.includes("cartoon") || desc.includes("comic") || desc.includes("toon")) {
+    drawCartoonCharacter(ctx, cx, cy, scale, t, p);
+  } else {
+    drawPixarCharacter(ctx, cx, cy, scale, t);
+  }
+}
+
 window.__renderAtTime = (t) => {
   const w = canvas.width;
   const h = canvas.height;
@@ -343,8 +928,11 @@ window.__renderAtTime = (t) => {
 
   if (THEME === "pixel_art") {
     drawPixelArtScene(ctx, w, h, p, t);
-    document.getElementById("lowerThird").style.opacity = Math.min(1, p * 4.0);
-    document.getElementById("bar").style.width = `${(p * 100).toFixed(1)}%`;
+    const lt = document.getElementById("lowerThird");
+    if (lt && SHOW_HUD) {
+      lt.style.opacity = Math.min(1, p * 4.0);
+      document.getElementById("bar").style.width = `${(p * 100).toFixed(1)}%`;
+    }
     return;
   }
 
@@ -379,7 +967,7 @@ window.__renderAtTime = (t) => {
   ctx.closePath();
   ctx.fill();
 
-  // 4. Midground Animated Architectural / Bridge Silhouette
+  // 4. Midground Animated Architectural / Landscape Silhouette
   ctx.fillStyle = pal.mountMid;
   const scrollMid = (t * 75) % 180;
   for (let i = -1; i < Math.ceil(w / 180) + 2; i++) {
@@ -387,7 +975,6 @@ window.__renderAtTime = (t) => {
     const bh = h * (0.14 + ((i + SCENE_SEED) % 4) * 0.045);
     const by = h * 0.68 - bh;
     ctx.fillRect(bx, by, 110, bh);
-    // Warm lit windows
     ctx.fillStyle = "rgba(253, 224, 71, 0.45)";
     for (let wy = by + 16; wy < h * 0.66; wy += 24) {
       ctx.fillRect(bx + 18, wy, 14, 10);
@@ -397,44 +984,43 @@ window.__renderAtTime = (t) => {
     ctx.fillStyle = pal.mountMid;
   }
 
-  // 5. Foreground Perspective Ground & Motion Lines
+  // 5. Foreground Perspective Ground
   const ground = ctx.createLinearGradient(0, h * 0.66, 0, h);
   ground.addColorStop(0, pal.groundTop);
   ground.addColorStop(1, pal.groundBot);
   ctx.fillStyle = ground;
   ctx.fillRect(0, h * 0.66, w, h * 0.34);
 
-  ctx.strokeStyle = "rgba(56, 189, 248, 0.22)";
-  ctx.lineWidth = 2;
-  const gridShift = (t * 210) % 120;
-  for (let gx = -gridShift; gx < w; gx += 120) {
+  // 6. Dynamic Visual Style Effects (Anime Speed Lines or Cartoon Outlines)
+  if (THEME === "anime") {
+    ctx.save();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+    ctx.lineWidth = 2.5;
+    for (let i = 0; i < 9; i++) {
+      const ly = (h * 0.11 * i + t * 240) % h;
+      ctx.beginPath();
+      ctx.moveTo(0, ly);
+      ctx.lineTo(w * (0.28 + ((i * 17) % 10) * 0.06), ly);
+      ctx.stroke();
+    }
+    ctx.restore();
+  } else if (THEME === "cartoon_2d") {
+    ctx.save();
+    ctx.strokeStyle = "#090d16";
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.moveTo(gx, h * 0.66);
-    ctx.lineTo(gx - 90, h);
+    ctx.moveTo(0, h * 0.66);
+    ctx.lineTo(w, h * 0.66);
     ctx.stroke();
+    ctx.restore();
   }
 
-  // 6. Animated Data Wave / Motion Graphics Curve in Upper Midground
-  ctx.save();
-  ctx.strokeStyle = pal.accent;
-  ctx.lineWidth = 3.5;
-  ctx.beginPath();
-  for (let x = w * 0.52; x < w * 0.94; x += 12) {
-    const norm = (x - w * 0.52) / (w * 0.42);
-    const y = h * 0.36 + Math.sin(norm * Math.PI * 3 + t * 4.0) * 28 * Math.sin(norm * Math.PI);
-    if (x === w * 0.52) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-  ctx.restore();
-
-  // 7. Articulated Pixar-Style / 2D Illustrated / Storybook Character Walking Across Stage
+  // 7. Render Consistent Dynamic Scene Character
   const charX = w * (0.28 + p * 0.14);
   const charY = h * 0.62;
-  drawPixarCharacter(ctx, charX, charY, Math.min(w, h) / 680, t);
+  drawSceneCharacter(ctx, charX, charY, Math.min(w, h) / 680, t, p);
 
   if (THEME === "hand_drawn_storybook") {
-    // Hand-drawn pencil sketch contour & warm parchment vignette overlay
     ctx.save();
     ctx.strokeStyle = "rgba(61, 64, 91, 0.42)";
     ctx.lineWidth = 3;
@@ -447,7 +1033,7 @@ window.__renderAtTime = (t) => {
     ctx.restore();
   }
 
-  // 8. Atmospheric Bokeh & Floating Light Particles
+  // 8. Atmospheric Particles
   for (let i = 0; i < 28; i++) {
     const px = ((i * 197 + t * (35 + (i % 5) * 12)) % (w + 60)) - 30;
     const py = ((i * 131 - t * (18 + (i % 4) * 8)) % h + h) % h;
@@ -458,12 +1044,17 @@ window.__renderAtTime = (t) => {
     ctx.fill();
   }
 
-  // HUD updates
-  document.getElementById("lowerThird").style.opacity = Math.min(1, p * 4.0);
-  document.getElementById("lowerThird").style.transform = `translateY(${(1 - ease) * 24}px)`;
-  document.getElementById("bar").style.width = `${(p * 100).toFixed(1)}%`;
-  const metricNum = (88 + SCENE_SEED % 9 + p * 3.6).toFixed(1);
-  document.getElementById("metricVal").textContent = `${metricNum}%`;
+  // HUD updates (if enabled)
+  if (SHOW_HUD) {
+    const lt = document.getElementById("lowerThird");
+    if (lt) {
+      lt.style.opacity = Math.min(1, p * 4.0);
+      lt.style.transform = `translateY(${(1 - ease) * 24}px)`;
+      document.getElementById("bar").style.width = `${(p * 100).toFixed(1)}%`;
+      const metricNum = (88 + SCENE_SEED % 9 + p * 3.6).toFixed(1);
+      document.getElementById("metricVal").textContent = `${metricNum}%`;
+    }
+  }
 };
 window.__renderAtTime(0);
 </script>
@@ -481,26 +1072,61 @@ def render_hyperframes_scene(
     fps: int = 24,
 ) -> dict[str, Any]:
     duration = max(2.0, float(scene.get("duration_sec", 4.0) or 4.0))
-    title = html_lib.escape(str(scene.get("on_screen_text") or scene.get("title") or "Cinematic Scene")[:80])
-    subline = html_lib.escape(str(scene.get("narration_segment") or scene.get("narration") or "")[:180])
-    eyebrow = html_lib.escape(f"{category.replace('_', ' ').upper()} • {scene.get('speaker_name') or 'STUDIO ANIMATION'}")
+    from backend.services.document_parser import clean_markdown_inline
+    from backend.orchestration.audio_studio import sanitize_spoken_voiceover
+
+    raw_headline = str(scene.get("on_screen_text") or scene.get("title") or "Cinematic Scene")
+    clean_title = clean_markdown_inline(raw_headline)[:80]
+    title = html_lib.escape(clean_title)
+
+    raw_subline = str(scene.get("narration_segment") or scene.get("narration") or "")
+    clean_subline = sanitize_spoken_voiceover(raw_subline, default="")[:180]
+    subline = html_lib.escape(clean_subline)
+
+    clean_speaker = clean_markdown_inline(str(scene.get("speaker_name") or "STUDIO ANIMATION"))
+    eyebrow = html_lib.escape(f"{category.replace('_', ' ').upper()} • {clean_speaker}")
     raw_style = str(scene.get("visual_style") or scene.get("animation_theme") or "").strip().lower()
-    if raw_style in ("pixel_art", "2d_illustrated", "hand_drawn_storybook", "pixar_character_world", "painterly_parallax", "kinetic_data_hud"):
+    if raw_style in ("anime", "cartoon_2d", "pixel_art", "2d_illustrated", "hand_drawn_storybook", "pixar_character_world", "painterly_parallax", "kinetic_data_hud"):
         theme = raw_style
     elif raw_style == "3d_stylized":
         theme = "pixar_character_world"
+    elif any(k in raw_style for k in ("anime", "manga", "ghibli", "shonen")):
+        theme = "anime"
+    elif any(k in raw_style for k in ("cartoon", "comic", "toon")):
+        theme = "cartoon_2d"
     else:
         theme = str(scene.get("animation_theme") or "pixar_character_world")
-    seed = int(scene.get("order_index") or 1) + sum(ord(c) for c in title[:12])
+    seed = int(scene.get("order_index") or 1) + sum(ord(c) for c in clean_title[:12])
+
+    cat_low = category.lower()
+    is_cinematic_narrative = (
+        theme in ("anime", "cartoon_2d", "hand_drawn_storybook", "pixel_art")
+        or cat_low in ("documentary", "historical", "film", "cinema", "brand_film", "narrative", "animation")
+    )
+    show_hud = not is_cinematic_narrative
+
+    char_meta = {
+        "name": clean_markdown_inline(str(scene.get("character_name") or scene.get("title") or "")),
+        "desc": str(scene.get("character_description") or scene.get("visual_description") or ""),
+    }
+
+    body_class = "" if show_hud else "hide-hud"
+    cinematic_caption_html = ""
+    if not show_hud and clean_subline and clean_subline.lower() != "silence.":
+        cinematic_caption_html = f'<div class="cinematic-caption">{subline}</div>'
 
     html = (
         _PIXAR_MOTION_TEMPLATE
+        .replace("__BODY_CLASS__", body_class)
         .replace("__EYEBROW__", eyebrow)
         .replace("__HEADLINE__", title)
         .replace("__SUBLINE__", subline)
         .replace("__THEME__", json.dumps(theme))
         .replace("__SEED__", json.dumps(seed))
         .replace("__DURATION__", json.dumps(duration))
+        .replace("__SHOW_HUD__", "true" if show_hud else "false")
+        .replace("__CHARACTER_META__", json.dumps(char_meta))
+        .replace("__CINEMATIC_CAPTION_HTML__", cinematic_caption_html)
     )
     res = capture_html_to_mp4(
         html, output_mp4, width=width, height=height, fps=fps, duration_sec=duration,
