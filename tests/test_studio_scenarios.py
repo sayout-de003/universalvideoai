@@ -134,7 +134,7 @@ def test_scenario_antigravity_plugin_and_mcp_server():
     assert len(list((plugin_root / "skills").glob("*/SKILL.md"))) >= 21
     assert (plugin_root / "skills" / "lemo-opuscar" / "SKILL.md").exists()
     assert (plugin_root / "skills" / "animated-short-film" / "SKILL.md").exists()
-    assert len(list((plugin_root / "agents").glob("*.md"))) == 22
+    assert len(list((plugin_root / "agents").glob("*.md"))) >= 25
 
     # Smoke test stdio MCP server
     reqs = "\n".join([

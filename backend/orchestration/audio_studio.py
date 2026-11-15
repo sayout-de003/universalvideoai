@@ -1,10 +1,11 @@
-"""Complete Audio Production Studio: TTS, multi-speaker, music, SFX, subtitles, mixing, and stems."""
+"""Complete Audio Production Studio: Neural Human Male/Female TTS, multi-speaker, music, SFX, subtitles, mixing, and stems."""
 
 from __future__ import annotations
 
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,42 @@ def probe_duration(media_path: Path) -> float:
         return max(0.1, float(out))
     except Exception:
         return 0.0
+
+
+_EDGE_NEURAL_VOICES: dict[str, str] = {
+    "default": "en-US-ChristopherNeural",
+    "narrator_deep": "en-US-ChristopherNeural",
+    "male": "en-US-ChristopherNeural",
+    "male_narrator": "en-US-ChristopherNeural",
+    "character_1": "en-US-GuyNeural",
+    "male_lead": "en-US-GuyNeural",
+    "male_british": "en-GB-RyanNeural",
+    "narrator_warm": "en-US-AriaNeural",
+    "female": "en-US-AriaNeural",
+    "female_narrator": "en-US-AriaNeural",
+    "character_2": "en-US-JennyNeural",
+    "female_lead": "en-US-JennyNeural",
+    "female_british": "en-GB-SoniaNeural",
+    "hindi": "hi-IN-MadhurNeural",
+    "hindi_male": "hi-IN-MadhurNeural",
+    "hindi_female": "hi-IN-SwaraNeural",
+}
+
+
+def resolve_neural_voice(voice_id: str = "default", language: str = "en") -> tuple[str, str]:
+    """Return (edge_neural_voice_name, gender) for the requested voice_id and language."""
+    vid = (voice_id or "default").strip()
+    if vid.startswith("edge:"):
+        custom = vid.split(":", 1)[1].strip()
+        gender = "female" if any(f in custom.lower() for f in ("aria", "jenny", "sonia", "swara", "natasha", "clara")) else "male"
+        return custom, gender
+    if language == "hi":
+        if vid in ("narrator_warm", "female", "female_narrator", "character_2", "female_lead", "hindi_female"):
+            return "hi-IN-SwaraNeural", "female"
+        return "hi-IN-MadhurNeural", "male"
+    edge_voice = _EDGE_NEURAL_VOICES.get(vid, "en-US-ChristopherNeural")
+    gender = "female" if vid in ("narrator_warm", "female", "female_narrator", "character_2", "female_lead", "female_british") else "male"
+    return edge_voice, gender
 
 
 def generate_tts(
@@ -47,21 +84,68 @@ def generate_tts(
 
     from backend.integrations.voicestudio_adapter import voicestudio_adapter
     _vs_names = {
-        "default": "alloy",
+        "default": "onyx",
         "narrator_deep": "onyx",
         "narrator_warm": "nova",
         "character_1": "echo",
         "character_2": "shimmer",
         "hindi": "alloy",
     }
-    vs_voice = voice_id.split(":", 1)[1] if voice_id.startswith("voicestudio:") else _vs_names.get(voice_id, "alloy")
+    vs_voice = voice_id.split(":", 1)[1] if voice_id.startswith("voicestudio:") else _vs_names.get(voice_id, "onyx")
     vs_res = voicestudio_adapter.synthesize_speech(clean_text, output_wav, voice=vs_voice)
     if vs_res.get("success"):
         return {**vs_res, "duration_sec": probe_duration(output_wav)}
 
+    # Primary Human Neural TTS (Microsoft Edge Neural Voices — Male & Female)
+    if shutil.which("ffmpeg") and not os.environ.get("DISABLE_EDGE_TTS"):
+        edge_voice, gender = resolve_neural_voice(voice_id, language)
+        mp3_tmp = output_wav.with_suffix(".edge.mp3")
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "edge_tts", "--voice", edge_voice, "--text", clean_text, "--write-media", str(mp3_tmp)],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            if proc.returncode == 0 and mp3_tmp.is_file() and mp3_tmp.stat().st_size > 512:
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", str(mp3_tmp), "-ar", "44100", "-ac", "2", str(output_wav)],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                mp3_tmp.unlink(missing_ok=True)
+                return {
+                    "success": True,
+                    "path": str(output_wav),
+                    "duration_sec": probe_duration(output_wav),
+                    "provider": "edge_neural_tts",
+                    "voice_used": edge_voice,
+                    "voice_gender": gender,
+                    "quality_tier": "neural_human_tts",
+                    "license": "generated_neural_tts",
+                }
+        except Exception:
+            pass
+        finally:
+            mp3_tmp.unlink(missing_ok=True)
+
     if shutil.which("say") and shutil.which("ffmpeg"):
         aiff_tmp = output_wav.with_suffix(".aiff")
-        voice_map = {"default": "Daniel", "narrator_deep": "Daniel", "narrator_warm": "Samantha", "character_1": "Alex", "character_2": "Karen", "hindi": "Lekha"}
+        voice_map = {
+            "default": "Daniel",
+            "narrator_deep": "Daniel",
+            "male": "Daniel",
+            "male_narrator": "Daniel",
+            "character_1": "Alex",
+            "male_lead": "Alex",
+            "narrator_warm": "Samantha",
+            "female": "Samantha",
+            "female_narrator": "Samantha",
+            "character_2": "Karen",
+            "female_lead": "Karen",
+            "hindi": "Lekha",
+        }
         selected_voice = voice_map.get(voice_id, voice_id if voice_id != "default" else "Daniel")
         if language == "hi" and voice_id == "default":
             selected_voice = "Lekha"
@@ -143,14 +227,12 @@ def generate_music_bed(output_wav: Path, duration_sec: float, mood: str = "cinem
     output_wav.parent.mkdir(parents=True, exist_ok=True)
     dur = max(1.0, float(duration_sec))
 
-    # shortcut: one cue, looped by the mixer to the program length. A scored cue sheet replaces this.
     ov = _fetch_openverse_music(output_wav, mood, min(dur, 180.0))
     if ov:
         return ov
 
     pad_dur = min(dur, 32.0)
     fade_out_start = max(0.0, pad_dur - 1.2)
-    # Low chord pad. Pink noise was an unpitched bed and read as room tone.
     chord = "0.07*sin(2*PI*110*t)+0.05*sin(2*PI*164.81*t)+0.04*sin(2*PI*220*t)+0.02*sin(2*PI*329.63*t)"
     subprocess.run(
         [
@@ -170,7 +252,8 @@ def generate_music_bed(output_wav: Path, duration_sec: float, mood: str = "cinem
     }
 
 
-def generate_sfx(output_wav: Path, sfx_type: str = "whoosh", duration_sec: float = 0.8) -> dict[str, Any]:
+def generate_sfx(output_wav: Path, sfx_type: str = "subtle_chime", duration_sec: float = 0.5) -> dict[str, Any]:
+    """Generate clean, non-noisy harmonic SFX cues (never pink/white noise whooshes)."""
     output_wav.parent.mkdir(parents=True, exist_ok=True)
     dur = max(0.2, float(duration_sec))
     from backend.integrations.voicestudio_adapter import voicestudio_adapter
@@ -179,25 +262,20 @@ def generate_sfx(output_wav: Path, sfx_type: str = "whoosh", duration_sec: float
         return {**vs_sfx, "duration_sec": probe_duration(output_wav)}
 
     if sfx_type == "impact":
-        src = f"aevalsrc=0.45*sin(2*PI*65*t)*exp(-4*t):s=44100:d={dur}"
+        src = f"aevalsrc=0.22*sin(2*PI*65*t)*exp(-5*t):s=44100:d={dur}"
         tone = "lowpass=f=180"
     elif sfx_type == "riser":
-        src = f"aevalsrc=0.25*sin(2*PI*(120+400*t/{dur})*t):s=44100:d={dur}"
-        tone = "highpass=f=200,lowpass=f=4000"
-    elif sfx_type == "pop":
-        src = f"aevalsrc=0.35*sin(2*PI*520*t)*exp(-14*t):s=44100:d={dur}"
-        tone = "highpass=f=300"
-    elif sfx_type == "ambience":
-        src = f"anoisesrc=c=pink:r=44100:a=0.04:d={dur}"
-        tone = "lowpass=f=800"
+        src = f"aevalsrc=0.12*sin(2*PI*(140+220*t/{dur})*t)*exp(-2*t):s=44100:d={dur}"
+        tone = "lowpass=f=1200"
     else:
-        src = f"anoisesrc=c=pink:r=44100:a=0.12:d={dur}"
-        tone = "bandpass=f=1400:width_type=h:w=900"
+        # Soft harmonic chime / warm low pulse — zero pink/white noise hiss
+        src = f"aevalsrc=0.06*sin(2*PI*220*t)*exp(-6*t)+0.04*sin(2*PI*329.63*t)*exp(-8*t):s=44100:d={dur}"
+        tone = "lowpass=f=900"
     subprocess.run(
-        ["ffmpeg", "-y", "-f", "lavfi", "-i", src, "-af", f"{tone},afade=t=in:st=0:d=0.05,afade=t=out:st={max(0.05, dur-0.15):.2f}:d=0.15", "-ar", "44100", "-ac", "2", str(output_wav)],
+        ["ffmpeg", "-y", "-f", "lavfi", "-i", src, "-af", f"{tone},afade=t=in:st=0:d=0.04,afade=t=out:st={max(0.04, dur-0.15):.2f}:d=0.15", "-ar", "44100", "-ac", "2", str(output_wav)],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    return {"success": True, "path": str(output_wav), "duration_sec": probe_duration(output_wav), "provider": "ffmpeg_procedural_sfx", "license": "generated_procedural_cc0"}
+    return {"success": True, "path": str(output_wav), "duration_sec": probe_duration(output_wav), "provider": "ffmpeg_harmonic_sfx", "license": "generated_procedural_cc0"}
 
 
 def _fmt_srt_time(sec: float) -> str:
@@ -254,7 +332,7 @@ def mix_audio_stems(
     sfx_cues: list[tuple[Path, float]],
     total_duration_sec: float,
     stems_dir: Path,
-    music_volume: float = 0.25,
+    music_volume: float = 0.22,
 ) -> dict[str, str]:
     stems_dir.mkdir(parents=True, exist_ok=True)
     dur = max(1.0, float(total_duration_sec))
@@ -288,7 +366,7 @@ def mix_audio_stems(
             lbl = f"[s{idx}]"
             filter_parts.append(f"[{idx}:a]adelay={delay_ms}|{delay_ms},apad=whole_dur={dur:.3f}{lbl}")
             labels.append(lbl)
-        filter_parts.append("".join(labels) + f"amix=inputs={len(labels)}:duration=first:normalize=0,volume=0.65[sout]")
+        filter_parts.append("".join(labels) + f"amix=inputs={len(labels)}:duration=first:normalize=0,volume=0.25[sout]")
         subprocess.run(["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(filter_parts), "-map", "[sout]", "-t", f"{dur:.3f}", str(sfx_stem)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
         subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo:d={dur:.3f}", str(sfx_stem)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

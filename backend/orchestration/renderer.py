@@ -83,8 +83,16 @@ def _probe_duration(path: Path) -> float:
         return 0.0
 
 
-def concat_video_clips(clip_paths: list[Path], output_mp4: Path, soften: bool = True) -> Path:
-    """Join shots. Edge fades keep each shot's duration so narration stays locked."""
+_XFADE_TRANSITIONS = ("smoothleft", "dissolve", "circleopen", "smoothright", "wipeleft")
+
+
+def concat_video_clips(
+    clip_paths: list[Path],
+    output_mp4: Path,
+    soften: bool = True,
+    transitions: list[str] | None = None,
+) -> Path:
+    """Join shots with true FFmpeg xfade transitions while keeping exact cumulative duration via tpad."""
     output_mp4.parent.mkdir(parents=True, exist_ok=True)
     if not clip_paths:
         raise ValueError("No video clips provided for concatenation.")
@@ -93,17 +101,34 @@ def concat_video_clips(clip_paths: list[Path], output_mp4: Path, soften: bool = 
         return output_mp4
 
     durations = [_probe_duration(p) for p in clip_paths]
-    fade = 0.12
-    can_soften = soften and all(d > fade * 2 + 0.2 for d in durations)
-    if can_soften:
+    trans_dur = 0.35
+    can_xfade = soften and len(clip_paths) <= 18 and all(d > trans_dur * 2 + 0.3 for d in durations)
+    if can_xfade:
         parts: list[str] = []
-        labels: list[str] = []
-        for i, dur in enumerate(durations):
-            parts.append(
-                f"[{i}:v]fade=t=in:st=0:d={fade:.2f},fade=t=out:st={max(0.0, dur - fade):.3f}:d={fade:.2f},setpts=PTS-STARTPTS[v{i}]"
+        n = len(clip_paths)
+        for i in range(n):
+            if i < n - 1:
+                parts.append(
+                    f"[{i}:v]fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration={trans_dur:.2f},setpts=PTS-STARTPTS[v{i}]"
+                )
+            else:
+                parts.append(f"[{i}:v]fps=30,format=yuv420p,setpts=PTS-STARTPTS[v{i}]")
+
+        cum_offset = 0.0
+        prev_label = "[v0]"
+        for i in range(1, n):
+            cum_offset += durations[i - 1]
+            t_name = (
+                transitions[i]
+                if transitions and i < len(transitions) and transitions[i] in _XFADE_TRANSITIONS
+                else _XFADE_TRANSITIONS[(i - 1) % len(_XFADE_TRANSITIONS)]
             )
-            labels.append(f"[v{i}]")
-        parts.append(f"{''.join(labels)}concat=n={len(clip_paths)}:v=1:a=0[v]")
+            out_label = "[v]" if i == n - 1 else f"[xf{i}]"
+            parts.append(
+                f"{prev_label}[v{i}]xfade=transition={t_name}:duration={trans_dur:.2f}:offset={cum_offset:.3f}{out_label}"
+            )
+            prev_label = out_label
+
         cmd = ["ffmpeg", "-y"]
         for p in clip_paths:
             cmd.extend(["-i", str(p)])

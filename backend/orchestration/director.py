@@ -178,10 +178,15 @@ def _plan_hierarchy_and_bible(
     ws = PROJECTS_DIR / project_id
     fmt_spec = get_format_spec(fmt_key)
 
-    research_pkg: dict[str, Any] = {"sources": [], "claims": [], "dossier_md": ""}
-    if fmt_spec["requires_research"]:
-        research_pkg = run_project_research(project_id, title, ws, allow_web=True)
-        _log_agent_message(project_id, "Research Director", f"Completed research with {research_pkg['sources_count']} source(s) and {research_pkg['claims_count']} fact-checked claim(s).")
+    research_pkg = run_project_research(project_id, title, ws, allow_web=bool(fmt_spec["requires_research"]))
+    _log_agent_message(project_id, "Research Director", f"Completed research with {research_pkg['sources_count']} source(s) and {research_pkg['claims_count']} fact-checked claim(s).")
+    trending = research_pkg.get("trending_themes") or {}
+    if trending:
+        _log_agent_message(
+            project_id,
+            "Trend & Theme Researcher Agent",
+            f"Identified trending archetype '{trending.get('theme_archetype')}', style '{trending.get('recommended_animation_style')}', and dual Male/Female neural voice casting.",
+        )
 
     ref_pkg = build_reference_package(project_id, ws)
     script_pkg = develop_and_write_screenplay(
@@ -195,10 +200,11 @@ def _plan_hierarchy_and_bible(
     num_chapters = 4 if (target_dur > 360 and len(generated_scenes) >= 8) else (2 if len(generated_scenes) > 4 else 1)
     scenes_per_chapter = max(1, (len(generated_scenes) + num_chapters - 1) // num_chapters)
 
-    _log_agent_message(project_id, "Specialist Screenwriter", f"Wrote {len(generated_scenes)}-scene screenplay ({script_pkg['author_mode']}); evaluator score={script_pkg['evaluation']['weighted_score']}.")
-    _log_agent_message(project_id, "Art Director", f"Defined visual palette, lighting language, and motion style for '{fmt_spec['label']}' using '{render_engine}'.")
+    _log_agent_message(project_id, "Hollywood Screenplay Architect", f"Wrote {len(generated_scenes)}-scene screenplay ({script_pkg['author_mode']}) with dual Male/Female voice direction; evaluator score={script_pkg['evaluation']['weighted_score']}.")
+    _log_agent_message(project_id, "Pixar 2D/3D & Motion Director", f"Mapped multi-layer 2D/3D Pixar character animation, Remotion motion graphics, and xfade transitions for '{fmt_spec['label']}'.")
 
-    narrator_id = f"spk_{uuid.uuid4().hex[:8]}"
+    narrator_male_id = f"spk_{uuid.uuid4().hex[:8]}"
+    narrator_female_id = f"spk_{uuid.uuid4().hex[:8]}"
     char_id = f"chr_{uuid.uuid4().hex[:8]}"
     loc_id = f"loc_{uuid.uuid4().hex[:8]}"
     prop_id = f"prp_{uuid.uuid4().hex[:8]}"
@@ -206,12 +212,16 @@ def _plan_hierarchy_and_bible(
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO speakers (id, project_id, name, role, voice_provider, voice_id, language) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (narrator_id, project_id, "Primary Narrator", "narrator", "local", "narrator_deep" if category in ("documentary", "cinematic") else "default", language),
+            (narrator_male_id, project_id, "Lead Narrator (Male - ChristopherNeural)", "narrator_male", "edge_neural_tts", "narrator_deep", language),
+        )
+        conn.execute(
+            "INSERT INTO speakers (id, project_id, name, role, voice_provider, voice_id, language) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (narrator_female_id, project_id, "Co-Narrator & Lead (Female - AriaNeural)", "narrator_female", "edge_neural_tts", "narrator_warm", language),
         )
         conn.execute(
             """INSERT INTO characters (id, project_id, name, role, visual_description, facial_features, body_proportions, clothing, personality, voice_id, voice_provider)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (char_id, project_id, "Lead Subject", "protagonist", f"Locked identity for {script_pkg['subject']}: same face, silhouette, and wardrobe in every shot of {title}", "Expressive eyes, clear silhouette", "Balanced proportions", "One costume for the whole picture", "Engaging and memorable", "character_1", "local"),
+            (char_id, project_id, "Lead Subject", "protagonist", f"Locked identity for {script_pkg['subject']}: same face, silhouette, and wardrobe in every shot of {title}", "Expressive eyes, clear silhouette", "Balanced proportions", "One costume for the whole picture", "Engaging and memorable", "character_1", "edge_neural_tts"),
         )
         conn.execute(
             """INSERT INTO locations (id, project_id, name, architecture, layout, time_of_day, lighting, weather, color_palette)
@@ -246,6 +256,9 @@ def _plan_hierarchy_and_bible(
                 scene_title = f"Scene {scene_idx_global + 1}: {sc_spec['title']}"
                 vis_desc = sc_spec["visual_description"]
                 scene_dur = float(sc_spec["duration_sec"])
+                scene_engine = sc_spec.get("preferred_scene_engine") or render_engine if render_engine == "ffmpeg" else render_engine
+                scene_voice = sc_spec.get("voice_id") or ("narrator_deep" if scene_idx_global % 2 == 0 else "narrator_warm")
+                scene_trans = sc_spec.get("transition") or ("smoothleft" if s_i > 0 else "cut")
                 conn.execute(
                     """INSERT INTO scenes
                        (id, project_id, chapter_id, sequence_id, order_index, title, script_segment,
@@ -255,8 +268,8 @@ def _plan_hierarchy_and_bible(
                     (
                         scene_id, project_id, chap_id, seq_id, scene_idx_global,
                         scene_title, narration, narration, vis_desc, vis_desc,
-                        "3d_scene" if render_engine in ("threejs", "blender") else ("2d_character_animation" if render_engine == "hyperframes" else "procedural_motion"),
-                        render_engine, "local", json.dumps([char_id]), loc_id, scene_dur, "crossfade" if s_i > 0 else "cut",
+                        "3d_scene" if scene_engine in ("threejs", "blender") else ("2d_character_animation" if scene_engine == "hyperframes" else "procedural_motion"),
+                        scene_engine, scene_voice, json.dumps([char_id]), loc_id, scene_dur, scene_trans,
                     ),
                 )
                 conn.execute(
@@ -357,7 +370,12 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
         scene_wav = ws / "audio" / f"{sc['id']}_narration.wav"
 
         if not (resume and scene_mp4.exists() and scene_wav.exists() and sc.get("quality_status") == "generated"):
-            tts_res = generate_tts(sc["narration_segment"] or sc["title"], scene_wav, voice_id=narrator_voice, language=project["language"])
+            scene_voice = (
+                sc.get("provider")
+                if sc.get("provider") in ("narrator_deep", "narrator_warm", "character_1", "character_2", "male", "female")
+                else ("narrator_deep" if idx % 2 == 0 else "narrator_warm")
+            )
+            tts_res = generate_tts(sc["narration_segment"] or sc["title"], scene_wav, voice_id=scene_voice, language=project["language"])
             actual_audio_dur = float(tts_res.get("duration_sec") or sc["duration_sec"])
             target_scene_dur = max(float(sc["duration_sec"]), actual_audio_dur + 0.4)
             shot = shots_by_scene.get(sc["id"]) or {}
@@ -368,6 +386,7 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                     "camera_movement": shot.get("camera_movement") or sc.get("camera_movement"),
                     "lighting": shot.get("lighting") or sc.get("lighting"),
                     "shot_type": shot.get("shot_type") or sc.get("shot_type"),
+                    "speaker_name": "Male Lead Voice" if scene_voice in ("narrator_deep", "character_1", "male") else "Female Lead Voice",
                 },
                 scene_mp4,
                 category=project["category"], resolution=project["resolution"], fps=int(project["fps"]),
@@ -399,12 +418,6 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
             sc["duration_sec"] = max(float(sc["duration_sec"]), probe_duration(scene_wav) + 0.4)
 
         narration_wavs.append((scene_wav, cursor_sec))
-        if idx > 0:
-            sfx_wav = ws / "audio" / f"sfx_whoosh_{idx}.wav"
-            if not sfx_wav.exists():
-                generate_sfx(sfx_wav, sfx_type="whoosh", duration_sec=0.6)
-            sfx_cues.append((sfx_wav, max(0.0, cursor_sec - 0.25)))
-
         scenes_with_timings.append({**sc, "start_sec": cursor_sec})
         cursor_sec += float(sc["duration_sec"])
 
@@ -413,20 +426,24 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
     music_wav = ws / "audio" / "background_music.wav"
     mood = "comedy" if "funny" in project["prompt"].lower() else ("cinematic" if project["category"] in ("documentary", "cinematic") else "upbeat")
     generate_music_bed(music_wav, duration_sec=total_dur, mood=mood)
-    stems = mix_audio_stems(narration_wavs, music_wav, sfx_cues, total_dur, ws / "stems", music_volume=0.25)
+    stems = mix_audio_stems(narration_wavs, music_wav, sfx_cues, total_dur, ws / "stems", music_volume=0.22)
     sub_langs = project.get("subtitle_languages") or ["en"]
     subs = generate_subtitles(scenes_with_timings, ws / "subtitles", languages=sub_langs, word_level=True)
     _sync_timeline_from_production(project_id, scenes_with_timings)
 
-    _log_agent_message(project_id, "Sound Designer Agent", f"Generated mood-matched music, {len(sfx_cues)} transition SFX, and ducked master mix + stems.")
-    _log_agent_message(project_id, "Video Editor Agent", "Synchronized 12-track timeline with narration, music ducking, SFX, and word-level captions.")
+    _log_agent_message(project_id, "Sound Designer Agent", "Generated mood-matched score, dual Male/Female neural narration stems, and clean ducked master mix (zero whoosh noise at cuts).")
+    _log_agent_message(project_id, "Video Editor Agent", "Synchronized 12-track timeline with narration, music ducking, xfade transitions, and word-level captions.")
 
     _save_checkpoint(project_id, ProductionStage.RENDERING.value, "running", {})
     chapter_videos, chapter_meta = [], []
     for ch in chapters:
         ch_scenes = [s for s in scenes_with_timings if s["chapter_id"] == ch["id"]]
         ch_mp4 = ws / "renders" / f"{ch['id']}.mp4"
-        concat_video_clips([ws / "renders" / f"{s['id']}.mp4" for s in ch_scenes], ch_mp4)
+        concat_video_clips(
+            [ws / "renders" / f"{s['id']}.mp4" for s in ch_scenes],
+            ch_mp4,
+            transitions=[str(s.get("transition") or "smoothleft") for s in ch_scenes],
+        )
         chapter_videos.append(ch_mp4)
         chapter_meta.append({"title": ch["title"], "duration_sec": sum(float(s["duration_sec"]) for s in ch_scenes)})
         with get_conn() as conn:
@@ -550,7 +567,13 @@ def _sync_timeline_from_production(project_id: str, scenes_with_timings: list[di
 
 def list_projects() -> list[dict[str, Any]]:
     with get_conn() as conn:
-        return rows_to_dicts(conn.execute("SELECT * FROM projects ORDER BY updated_at DESC").fetchall())
+        # Scene counts let the UI show real progress per project without fetching every project's detail.
+        return rows_to_dicts(conn.execute(
+            """SELECT p.*,
+                      (SELECT COUNT(*) FROM scenes s WHERE s.project_id = p.id) AS scenes_total,
+                      (SELECT COUNT(*) FROM scenes s WHERE s.project_id = p.id AND s.quality_status = 'generated') AS scenes_done
+               FROM projects p ORDER BY p.updated_at DESC"""
+        ).fetchall())
 
 
 def get_project_detail(project_id: str) -> dict[str, Any] | None:
