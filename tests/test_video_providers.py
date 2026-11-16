@@ -37,8 +37,9 @@ def test_health_reports_provider_states_without_claiming_ready():
         health = client.get("/api/health").json()
     assert health["ok"] is True
     states = {row["id"]: row for row in health["video_providers"]}
-    assert set(states) == {"veo", "kling", "runway", "seedance", "minimax", "wan"}
-    for row in health["video_providers"] + health["image_providers"]:
+    assert {"veo", "kling", "runway", "seedance", "minimax", "wan"}.issubset(set(states))
+    cloud_rows = [row for row in health["video_providers"] if not str(row["id"]).startswith("hf_")]
+    for row in cloud_rows + health["image_providers"]:
         assert row["state"] in {"not_configured", "configured", "not_installed", "capability_unsupported"}
         assert row["authenticated"] is False
         assert row["production_ready"] is False

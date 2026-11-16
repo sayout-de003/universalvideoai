@@ -17,7 +17,7 @@ def generate_cloud_shot(
     aspect_ratio: str,
 ) -> dict[str, Any]:
     snapshot = video_provider_readiness()
-    chosen = next((provider for provider in list_video_providers() if provider.readiness()["state"] == "configured"), None)
+    chosen = next((provider for provider in list_video_providers() if not provider.provider_id.startswith("hf_") and provider.readiness()["state"] == "configured"), None)
     if chosen is None:
         detail = "No video provider is configured. A fallback clip is not counted as generated footage."
         job = record_generation_job(provider="none", tool_name="", state="not_configured", prompt=prompt, error=detail)

@@ -154,10 +154,25 @@ export function DashboardView({ health, engines, projects, storageUsedMb, onOpen
               <div><div className="label">Voice dictation</div>{health?.openwhispr.bridge_online ? "OpenWhispr connected" : "OpenWhispr not running — typing still works"}</div>
             </div>
             <div>
-              <div className="label">Video engines</div>
+              <div className="label">Video & Animation Engines</div>
               <div className="flex flex-wrap gap-2">
-                {renderEngines.map((e) => <span key={e.id} className={`chip ${e.available ? "chip-done" : ""}`}>{e.name}{e.available ? "" : " (not installed)"}</span>)}
+                {renderEngines.map((e) => (
+                  <span key={e.id} className={`chip ${e.available ? "chip-done" : ""}`}>
+                    {e.name || e.id}
+                    {e.available ? "" : " (not installed)"}
+                  </span>
+                ))}
                 {renderEngines.length === 0 && <span className="hint">Waiting for the studio engine…</span>}
+              </div>
+            </div>
+            <div>
+              <div className="label">Voice & Speech Synthesis Providers</div>
+              <div className="flex flex-wrap gap-2">
+                {((engines?.tts_providers as Array<{ id: string; provider: string; model?: string; available: boolean }>) || []).map((t) => (
+                  <span key={t.id} className={`chip ${t.available ? "chip-done" : ""}`}>
+                    {t.provider} {t.model ? `(${t.model.split("/").pop()})` : ""}
+                  </span>
+                ))}
               </div>
             </div>
           </div>

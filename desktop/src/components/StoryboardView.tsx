@@ -6,17 +6,34 @@ import type { ProjectDetail } from "../types/studio";
 
 interface Props {
   project: ProjectDetail;
-  onRegenerateScene: (sceneId: string, visualStyle?: string) => Promise<void>;
+  onRegenerateScene: (sceneId: string, visualStyle?: string, renderEngine?: string) => Promise<void>;
   onRefresh?: () => Promise<void>;
 }
 
 const STYLE_OPTIONS = [
+  { id: "2d_illustrated", label: "2D Illustrated" },
+  { id: "3d_stylized", label: "3D Stylized (Blender)" },
+  { id: "tech_saas", label: "Modern SaaS Explainer" },
+  { id: "cinematic_photoreal", label: "Cinematic 35mm Film" },
   { id: "anime", label: "Anime / Manga" },
   { id: "cartoon_2d", label: "Classic 2D Cartoon" },
   { id: "pixel_art", label: "Pixel Art" },
-  { id: "2d_illustrated", label: "2D Illustrated" },
-  { id: "3d_stylized", label: "3D Stylized" },
   { id: "hand_drawn_storybook", label: "Hand-Drawn Storybook" },
+];
+
+const ENGINE_OPTIONS = [
+  { id: "", label: "Auto Engine" },
+  { id: "hyperframes", label: "HyperFrames (2D/3D & Lip-Sync)" },
+  { id: "blender", label: "Headless Blender 3D" },
+  { id: "remotion", label: "Remotion (Kinetic HUD)" },
+  { id: "hf_hyperflow_h3_flash", label: "HF · HyperFlow H3 Flash" },
+  { id: "hf_wan2_2_ti2v_5b", label: "HF · Wan 2.2 TI2V" },
+  { id: "hf_wan2_2_t2v_a14b", label: "HF · Wan 2.2 T2V 14B" },
+  { id: "hf_minimax_turbo_lora", label: "HF · MiniMax Turbo" },
+  { id: "hf_dmad", label: "HF · DMAD (4-Step)" },
+  { id: "hf_wan2_1_t2v_1_3b", label: "HF · Wan 2.1 1.3B" },
+  { id: "threejs", label: "Three.js WebGL" },
+  { id: "ffmpeg", label: "FFmpeg Ken Burns" },
 ];
 
 function cleanCharacterDesc(raw: string, fallbackTitle: string): string {
@@ -34,12 +51,13 @@ function cleanCharacterDesc(raw: string, fallbackTitle: string): string {
 export function StoryboardView({ project, onRegenerateScene, onRefresh }: Props) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [sceneStyleOverrides, setSceneStyleOverrides] = useState<Record<string, string>>({});
+  const [sceneEngineOverrides, setSceneEngineOverrides] = useState<Record<string, string>>({});
   const [globalStyleBusy, setGlobalStyleBusy] = useState(false);
 
   const regenerate = async (id: string) => {
     setBusyId(id);
     try {
-      await onRegenerateScene(id, sceneStyleOverrides[id]);
+      await onRegenerateScene(id, sceneStyleOverrides[id], sceneEngineOverrides[id]);
     } finally {
       setBusyId(null);
     }
@@ -185,15 +203,25 @@ export function StoryboardView({ project, onRegenerateScene, onRefresh }: Props)
                       </div>
                     </div>
                     <div className="space-y-2 pt-3 border-t border-rule">
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="grid grid-cols-2 gap-1.5">
                         <select
                           aria-label={`Style override for ${sc.title}`}
-                          className="field text-xs py-1 px-2"
+                          className="field text-xs py-1 px-1.5"
                           value={sceneStyleOverrides[sc.id] || sc.visual_style || project.project.visual_style || "2d_illustrated"}
                           onChange={(e) => setSceneStyleOverrides((prev) => ({ ...prev, [sc.id]: e.target.value }))}
                         >
                           {STYLE_OPTIONS.map((st) => <option key={st.id} value={st.id}>{st.label}</option>)}
                         </select>
+                        <select
+                          aria-label={`Engine override for ${sc.title}`}
+                          className="field text-xs py-1 px-1.5"
+                          value={sceneEngineOverrides[sc.id] || ""}
+                          onChange={(e) => setSceneEngineOverrides((prev) => ({ ...prev, [sc.id]: e.target.value }))}
+                        >
+                          {ENGINE_OPTIONS.map((eng) => <option key={eng.id} value={eng.id}>{eng.label}</option>)}
+                        </select>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
                         <button
                           type="button"
                           disabled={busyId !== null}
@@ -202,10 +230,10 @@ export function StoryboardView({ project, onRegenerateScene, onRefresh }: Props)
                         >
                           <Check className="w-3 h-3" /> {sc.approved ? "Approved" : "Approve"}
                         </button>
+                        <span className={`chip text-xs ${made ? "chip-done" : ""}`}>{made ? "Made" : "Not made yet"}</span>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className={`chip ${made ? "chip-done" : ""}`}>{made ? "Made" : "Not made yet"}</span>
-                        <button onClick={() => regenerate(sc.id)} disabled={busyId !== null} className="btn btn-ghost text-[13px]">
+                      <div className="flex items-center justify-end">
+                        <button onClick={() => regenerate(sc.id)} disabled={busyId !== null} className="btn btn-ghost text-[13px] w-full justify-center">
                           <RefreshCw className={`w-3.5 h-3.5 ${busyId === sc.id ? "animate-spin" : ""}`} /> {busyId === sc.id ? "Redoing…" : "Redo this scene"}
                         </button>
                       </div>

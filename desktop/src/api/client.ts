@@ -92,4 +92,28 @@ export const studioClient = {
       method: "POST",
       body: JSON.stringify({ project_id: projectId, variants }),
     }),
+  listHuggingFaceModels: (fetchStats = false) =>
+    req<{ ok: boolean; count: number; models: Array<import("../types/studio").HuggingFaceModelInfo> }>(
+      `/api/models/huggingface?fetch_stats=${fetchStats}`
+    ),
+  getHuggingFaceModelStatus: (modelKey: string) =>
+    req<{ ok: boolean; model: import("../types/studio").HuggingFaceModelInfo }>(
+      `/api/models/huggingface/${encodeURIComponent(modelKey)}/status`
+    ),
+  prefetchHuggingFaceModel: (modelKey: string) =>
+    req<Record<string, unknown>>(`/api/models/huggingface/${encodeURIComponent(modelKey)}/prefetch`, { method: "POST" }),
+  generateHuggingFaceVideo: (body: { model_key?: string; repo_id?: string; prompt: string; duration_sec?: number; aspect_ratio?: string }) =>
+    req<Record<string, unknown>>("/api/models/huggingface/generate", { method: "POST", body: JSON.stringify(body) }),
+  listHuggingFaceVoiceModels: (fetchStats = false) =>
+    req<{ ok: boolean; count: number; models: Array<import("../types/studio").HuggingFaceVoiceModelInfo> }>(
+      `/api/models/huggingface/voice?fetch_stats=${fetchStats}`
+    ),
+  getHuggingFaceVoiceModelStatus: (modelKey: string) =>
+    req<{ ok: boolean; model: import("../types/studio").HuggingFaceVoiceModelInfo }>(
+      `/api/models/huggingface/voice/${encodeURIComponent(modelKey)}/status`
+    ),
+  prefetchHuggingFaceVoiceModel: (modelKey: string) =>
+    req<Record<string, unknown>>(`/api/models/huggingface/voice/${encodeURIComponent(modelKey)}/prefetch`, { method: "POST" }),
+  generateHuggingFaceVoice: (body: { model_key?: string; repo_id?: string; text: string; voice_id?: string; language?: string; speed?: number; emotion?: string }) =>
+    req<Record<string, unknown>>("/api/models/huggingface/voice/generate", { method: "POST", body: JSON.stringify(body) }),
 };

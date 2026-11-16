@@ -34,10 +34,12 @@ interface Props {
 
 const VISUAL_STYLES = [
   { id: "", label: "Let AI decide", note: "Matches visual style from your prompt & references" },
+  { id: "2d_illustrated", label: "2D Illustrated (HyperFrames)", note: "Vector & cel-shaded character animation, conference/studio staging, live lip-sync" },
+  { id: "3d_stylized", label: "3D Stylized (Blender)", note: "Rigged 3D characters, PBR lighting, Headless Blender EEVEE / Cycles" },
+  { id: "tech_saas", label: "Modern SaaS Explainer", note: "Floating UI glassmorphism, real-time metric cards, holographic dashboards & perspective grid" },
+  { id: "cinematic_photoreal", label: "Cinematic 35mm Film", note: "Anamorphic bokeh, volumetric lighting, directional contrast & rich film grade" },
   { id: "anime", label: "Anime / Manga", note: "Cel-shaded characters, dramatic eyes & hair, speed lines, cinematic anime lighting" },
   { id: "cartoon_2d", label: "Classic 2D Cartoon", note: "Bold ink outlines, squash & stretch bounce, expressive cartoon eyes & gloves" },
-  { id: "3d_stylized", label: "3D Stylized (Blender)", note: "Rigged 3D characters, PBR lighting, Headless Blender / Three.js" },
-  { id: "2d_illustrated", label: "2D Illustrated", note: "Vector & cel-shaded character animation, HyperFrames / Remotion" },
   { id: "pixel_art", label: "Pixel Art", note: "Crisp 16-bit sprites, stepped palette, LibreSprite / Canvas" },
   { id: "hand_drawn_storybook", label: "Hand-Drawn Storybook", note: "Watercolor parchment, sketchy ink contours, OpenToonz / Canvas" },
 ];
@@ -197,21 +199,38 @@ const COLOR_GRADES = [
 ];
 
 const VOICES = [
-  { id: "auto", label: "Let AI decide (Dual Human Male + Female Neural Voices)" },
-  { id: "dual", label: "Dual Male & Female Conversational Voices" },
-  { id: "male", label: "Male Human Voice Only (ChristopherNeural / GuyNeural)" },
-  { id: "female", label: "Female Human Voice Only (AriaNeural / JennyNeural)" },
+  { id: "auto", label: "Let AI decide (Dual Conversational Neural Actors)" },
+  { id: "dual", label: "Dual Male & Female Conversational Voices (Christopher + Aria Alternating)" },
+  { id: "male", label: "Male Lead Voice (ChristopherNeural - Confident & Authoritative)" },
+  { id: "female", label: "Female Lead Voice (AriaNeural - Expressive & Dynamic)" },
+  { id: "sarah", label: "Sarah (Female Professional / CTO Tech Explainer)" },
+  { id: "mark", label: "Mark (Male Casual / Software Engineer Lead)" },
+  { id: "maya", label: "Maya (Female Warm & Approachable / JennyNeural)" },
+  { id: "alex", label: "Alex (Male Modern & Conversational / GuyNeural)" },
+  { id: "clara", label: "Clara (British Female / SoniaNeural)" },
+  { id: "liam", label: "Liam (British Male / RyanNeural)" },
+  { id: "hindi_male", label: "Madhur (Hindi / English Bilingual Male)" },
+  { id: "hindi_female", label: "Swara (Hindi / English Bilingual Female)" },
+  { id: "hf_zonos3_mini", label: "Hugging Face · Zonos-v0.3-Mini (100M Sparse MoE Zero-Shot Emotion Voice)" },
+  { id: "hf_omnivoice", label: "Hugging Face · OmniVoice (600+ Languages at RTF 0.025)" },
+  { id: "hf_drama_3", label: "Hugging Face · Drama-3 (Fish Audio 35B Expressive Dramatic Speech)" },
 ];
 
 const ENGINES = [
-  { id: "", label: "Let AI decide (Pixar 2D/3D + Remotion Motion Graphics + xfade)" },
-  { id: "blender", label: "3D Rigged Character Animation (Headless Blender)" },
-  { id: "hyperframes", label: "Pixar 2D/3D Character & Parallax Animation (HyperFrames)" },
-  { id: "remotion", label: "Kinetic Motion Graphics & Data HUD (Remotion)" },
-  { id: "threejs", label: "3D WebGL Scenes (Three.js)" },
-  { id: "libresprite", label: "Pixel Art Sprite & Tilemap Pipeline (LibreSprite / Canvas)" },
-  { id: "opentoonz", label: "Hand-Drawn Storybook & Watercolor Pipeline (OpenToonz / Canvas)" },
-  { id: "ffmpeg", label: "Cinematic Slideshow & Footage (FFmpeg)" },
+  { id: "", label: "Let AI decide (Intelligent Auto-Routing: HyperFrames / Blender 3D / Remotion HUD)" },
+  { id: "hyperframes", label: "HyperFrames Pixar 2D/3D (Animated Staging, Character Acting & Live Lip-Sync)" },
+  { id: "blender", label: "Headless Blender 3D (Rigged 3D Characters, PBR Lighting & Custom Sets)" },
+  { id: "remotion", label: "Remotion Kinetic Graphics (Dynamic HUD, Code-Driven Charts & Typography)" },
+  { id: "hf_hyperflow_h3_flash", label: "Hugging Face · HyperFlow H3 Flash (Joint 32kHz Audio & Video Transformer)" },
+  { id: "hf_wan2_2_ti2v_5b", label: "Hugging Face · Wan 2.2 TI2V (5B Text & Image-to-Video Diffusion)" },
+  { id: "hf_wan2_2_t2v_a14b", label: "Hugging Face · Wan 2.2 T2V 14B MoE (Twin-Expert High Cinematic)" },
+  { id: "hf_minimax_turbo_lora", label: "Hugging Face · MiniMax H3 Turbo LoRA (4-8 Step 5x Speedup)" },
+  { id: "hf_dmad", label: "Hugging Face · DMAD (4-Step Multi-Critic Distilled Diffusion)" },
+  { id: "hf_wan2_1_t2v_1_3b", label: "Hugging Face · Wan 2.1 T2V 1.3B (Lightweight Diffusion)" },
+  { id: "threejs", label: "Three.js WebGL (Interactive 3D Geometric Sequences)" },
+  { id: "libresprite", label: "LibreSprite Pixel Art (16-Bit Retro Sprites & Tilemaps)" },
+  { id: "opentoonz", label: "Storybook & Watercolor (Parchment & Hand-Drawn Contours)" },
+  { id: "ffmpeg", label: "FFmpeg Archival / Documentary (Ken Burns Photography)" },
 ];
 
 export function NewProjectView({ onCreate }: Props) {
@@ -229,6 +248,11 @@ export function NewProjectView({ onCreate }: Props) {
   const [voiceMode, setVoiceMode] = useState("auto");
   const [shape, setShape] = useState(SHAPES[0]);
 
+  const [hfModels, setHfModels] = useState<import("../types/studio").HuggingFaceModelInfo[]>([]);
+  const [hfVoiceModels, setHfVoiceModels] = useState<import("../types/studio").HuggingFaceVoiceModelInfo[]>([]);
+  const [prefetchStatus, setPrefetchStatus] = useState<Record<string, { status: "idle" | "loading" | "done" | "error"; message: string }>>({});
+  const [showHfHub, setShowHfHub] = useState(false);
+
   useEffect(() => {
     let active = true;
     studioClient.listFormats().then((res) => {
@@ -241,8 +265,48 @@ export function NewProjectView({ onCreate }: Props) {
         setAvailableSkills(res.skills);
       }
     }).catch(() => {});
+    studioClient.listHuggingFaceModels().then((res) => {
+      if (active && Array.isArray(res.models) && res.models.length > 0) {
+        setHfModels(res.models);
+      }
+    }).catch(() => {});
+    studioClient.listHuggingFaceVoiceModels().then((res) => {
+      if (active && Array.isArray(res.models) && res.models.length > 0) {
+        setHfVoiceModels(res.models);
+      }
+    }).catch(() => {});
     return () => { active = false; };
   }, []);
+
+  const handlePrefetchModel = async (modelKey: string, isVoice = false) => {
+    setPrefetchStatus((prev) => ({ ...prev, [modelKey]: { status: "loading", message: "Prefetching / verifying snapshot…" } }));
+    try {
+      const res = isVoice
+        ? await studioClient.prefetchHuggingFaceVoiceModel(modelKey)
+        : await studioClient.prefetchHuggingFaceModel(modelKey);
+      if (res.ok) {
+        setPrefetchStatus((prev) => ({
+          ...prev,
+          [modelKey]: { status: "done", message: `Ready (${res.size_mb ? Math.round(Number(res.size_mb)) : 0} MB cached)` },
+        }));
+        if (isVoice) {
+          studioClient.listHuggingFaceVoiceModels().then((r) => setHfVoiceModels(r.models)).catch(() => {});
+        } else {
+          studioClient.listHuggingFaceModels().then((r) => setHfModels(r.models)).catch(() => {});
+        }
+      } else {
+        setPrefetchStatus((prev) => ({
+          ...prev,
+          [modelKey]: { status: "error", message: String(res.error || "Prefetch failed") },
+        }));
+      }
+    } catch (err) {
+      setPrefetchStatus((prev) => ({
+        ...prev,
+        [modelKey]: { status: "error", message: err instanceof Error ? err.message : String(err) },
+      }));
+    }
+  };
 
   // Duration & Pacing
   const [lengthSec, setLengthSec] = useState("");
@@ -1138,6 +1202,136 @@ export function NewProjectView({ onCreate }: Props) {
                 </li>
               ))}
             </ul>
+          )}
+        </div>
+
+        {/* Open-Source Hugging Face AI Model Hub */}
+        <div className="rounded-lg border border-rule p-4 space-y-3 bg-sunken/40">
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setShowHfHub((v) => !v)}
+              className="flex items-center gap-2 text-left font-bold text-ink hover:text-live text-sm"
+            >
+              {showHfHub ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              <span>Hugging Face AI Video & Voice Models (100% Free & Open-Source)</span>
+            </button>
+            <span className="text-xs text-mute font-mono">
+              {hfModels.length} video · {hfVoiceModels.length} voice models
+            </span>
+          </div>
+
+          {showHfHub && (
+            <div className="space-y-4 pt-2">
+              <p className="text-xs text-slate">
+                Browse, prefetch, or select cutting-edge open-source video transformers and neural voice models directly from the Hugging Face Hub.
+              </p>
+
+              {/* Video Models */}
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-mute mb-2">Video Diffusion & Transformer Models</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {hfModels.map((m) => {
+                    const isSelected = engine === m.repo_id || engine === `hf_${m.name.toLowerCase().replace(/[\s.-]+/g, "_")}`;
+                    const pStatus = prefetchStatus[m.repo_id];
+                    return (
+                      <div
+                        key={m.repo_id}
+                        className={`rounded-lg border p-3 text-xs flex flex-col justify-between transition ${
+                          isSelected ? "border-live bg-live-soft/20 ring-1 ring-live" : "border-rule bg-panel"
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-ink truncate">{m.display_name || m.name}</span>
+                            <span className="chip shrink-0 text-[10px]">{m.params_b ? `${m.params_b}B params` : m.category}</span>
+                          </div>
+                          <div className="text-mute font-mono text-[11px] truncate mt-0.5">{m.repo_id}</div>
+                          <p className="text-slate text-[11.5px] mt-1.5 line-clamp-2">{m.description}</p>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 mt-3 pt-2 border-t border-rule">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`w-2 h-2 rounded-full ${m.cached ? "bg-done" : "bg-mute"}`} />
+                            <span className="text-[11px] text-mute">{m.cached ? "Cached locally" : "Ready to fetch"}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handlePrefetchModel(m.repo_id, false)}
+                              disabled={pStatus?.status === "loading"}
+                              className="btn btn-quiet text-[11px] py-1 px-2"
+                              title="Prefetch or verify snapshot weights"
+                            >
+                              {pStatus?.status === "loading" ? "Fetching…" : "Verify"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEngine(m.repo_id)}
+                              className={`btn text-[11px] py-1 px-2.5 ${isSelected ? "btn-primary" : "btn-ghost"}`}
+                            >
+                              {isSelected ? "Selected" : "Use Model"}
+                            </button>
+                          </div>
+                        </div>
+                        {pStatus && (
+                          <div className={`mt-1.5 text-[11px] ${pStatus.status === "error" ? "text-live" : "text-done"}`}>
+                            {pStatus.message}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Voice Models */}
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-mute mb-2">Neural Voice Synthesis Models</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                  {hfVoiceModels.map((vm) => {
+                    const isVoiceSelected = voiceMode === vm.repo_id || voiceMode.includes(vm.name.toLowerCase());
+                    const vpStatus = prefetchStatus[vm.repo_id];
+                    return (
+                      <div
+                        key={vm.repo_id}
+                        className={`rounded-lg border p-3 text-xs flex flex-col justify-between transition ${
+                          isVoiceSelected ? "border-live bg-live-soft/20 ring-1 ring-live" : "border-rule bg-panel"
+                        }`}
+                      >
+                        <div>
+                          <div className="font-bold text-ink truncate">{vm.display_name || vm.name}</div>
+                          <div className="text-mute font-mono text-[11px] truncate mt-0.5">{vm.repo_id}</div>
+                          <p className="text-slate text-[11.5px] mt-1 line-clamp-2">{vm.description}</p>
+                        </div>
+                        <div className="flex items-center justify-between gap-1.5 mt-2.5 pt-2 border-t border-rule">
+                          <button
+                            type="button"
+                            onClick={() => handlePrefetchModel(vm.repo_id, true)}
+                            disabled={vpStatus?.status === "loading"}
+                            className="btn btn-quiet text-[11px] py-1 px-2"
+                          >
+                            {vpStatus?.status === "loading" ? "Fetching…" : "Verify"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setVoiceMode(vm.repo_id)}
+                            className={`btn text-[11px] py-1 px-2.5 ${isVoiceSelected ? "btn-primary" : "btn-ghost"}`}
+                          >
+                            {isVoiceSelected ? "Selected" : "Use Voice"}
+                          </button>
+                        </div>
+                        {vpStatus && (
+                          <div className={`mt-1.5 text-[11px] ${vpStatus.status === "error" ? "text-live" : "text-done"}`}>
+                            {vpStatus.message}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
           )}
         </div>
 

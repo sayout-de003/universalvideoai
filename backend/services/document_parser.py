@@ -125,11 +125,60 @@ def _extract_quoted_dialogue_turns(body: str) -> list[dict[str, Any]]:
 
 def _extract_character_and_scene_bible(text: str) -> dict[str, Any]:
     """Extract character descriptions, wardrobe, props, setting, and animation style."""
+    from backend.orchestration.audio_studio import resolve_neural_voice
     low = (text or "").lower()
     is_purple = "purple" in low
     characters: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
 
-    if re.search(r"\bboss\b", low):
+    # 1. Custom named characters with parenthetical descriptions (e.g. 'Sarah (CTO, wearing a navy blazer and glasses)')
+    for cm in re.finditer(r"\b([A-Z][a-zA-Z0-9_]{1,24})\s*\(([^)]+)\)", text or ""):
+        c_name = cm.group(1).strip()
+        c_raw_desc = cm.group(2).strip()
+        if c_name.lower() in _NOT_SPEAKERS or c_name.lower() in seen_names:
+            continue
+        seen_names.add(c_name.lower())
+        c_desc_low = c_raw_desc.lower()
+        # Extract role
+        role = ""
+        m_role = re.search(r"^(cto|ceo|lead engineer|engineer|founder|co-founder|designer|developer|architect|manager)", c_desc_low)
+        if m_role:
+            role = m_role.group(1).upper()
+        elif "," in c_raw_desc:
+            role = c_raw_desc.split(",")[0].strip()
+
+        # Extract wardrobe
+        wardrobe_list = []
+        m_wear = re.search(r"(?:wearing|dressed in|in)\s+([^,;]+)", c_desc_low)
+        if m_wear:
+            wardrobe_list = [w.strip() for w in re.split(r"\band\b|,", m_wear.group(1)) if w.strip()]
+        else:
+            wardrobe_list = [c_raw_desc]
+
+        props_list = []
+        for prop_cand in ("glasses", "coffee", "laptop", "id card", "headphones", "phone", "tablet", "mug"):
+            if prop_cand in c_desc_low:
+                props_list.append(prop_cand)
+
+        _, c_gender = resolve_neural_voice(c_name)
+        c_voice = "narrator_warm" if c_gender == "female" else "character_1"
+
+        characters.append({
+            "name": c_name,
+            "role": role or "protagonist",
+            "color": "stylized",
+            "wardrobe": wardrobe_list,
+            "props": props_list,
+            "visual_description": c_raw_desc,
+            "gender": c_gender,
+            "voice_id": c_voice,
+            "expression": "confident" if "cto" in c_desc_low or "ceo" in c_desc_low else "expressive",
+            "gestures": ["tech_gesturing", "talk"],
+        })
+
+    # 2. Known archetype characters (Boss, Employee, Friend)
+    if re.search(r"\bboss\b", low) and "boss" not in seen_names:
+        seen_names.add("boss")
         wardrobe = ["black tie"] if "black tie" in low else ["office shirt and tie"]
         characters.append({
             "name": "Boss",
@@ -137,10 +186,13 @@ def _extract_character_and_scene_bible(text: str) -> dict[str, Any]:
             "color": "purple" if is_purple else "stylized",
             "wardrobe": wardrobe,
             "props": [],
+            "gender": "male",
+            "voice_id": "character_1",
             "expression": "serious" if "serious" in low else "stern",
             "gestures": ["nervous_gesture"] if "nervous" in low else ["talk"],
         })
-    if re.search(r"\bemployee\b", low):
+    if re.search(r"\bemployee\b", low) and "employee" not in seen_names:
+        seen_names.add("employee")
         wardrobe = ["blue ID card"] if "id card" in low or "blue id" in low else ["office lanyard"]
         props = ["coffee cup"] if "coffee" in low else []
         characters.append({
@@ -149,10 +201,13 @@ def _extract_character_and_scene_bible(text: str) -> dict[str, Any]:
             "color": "purple" if is_purple else "stylized",
             "wardrobe": wardrobe,
             "props": props,
+            "gender": "male",
+            "voice_id": "character_2",
             "expression": "shocked" if "shocked" in low or "spit" in low else "expressive",
             "gestures": ["coffee_spit"] if "spit" in low else ["talk"],
         })
-    if re.search(r"\bfriend\b", low):
+    if re.search(r"\bfriend\b", low) and "friend" not in seen_names:
+        seen_names.add("friend")
         wardrobe = ["headphones"] if "headphone" in low else ["casual jacket"]
         characters.append({
             "name": "Friend",
@@ -160,12 +215,16 @@ def _extract_character_and_scene_bible(text: str) -> dict[str, Any]:
             "color": "purple" if is_purple else "stylized",
             "wardrobe": wardrobe,
             "props": ["headphones"] if "headphone" in low else [],
+            "gender": "male",
+            "voice_id": "character_3",
             "expression": "sarcastic" if "sarcastic" in low or "smirk" in low else "relaxed",
             "gestures": ["raise_hand"] if "raise" in low or "hand" in low else ["talk"],
         })
 
-    setting = "office break room" if ("break room" in low or "break-room" in low or "office" in low) else "studio"
-    env_props = [p for p in ("table", "chairs", "coffee cup", "coffee cups") if p in low]
+    setting = "tech office" if any(k in low for k in ("tech", "saas", "holographic", "dashboard", "startup")) else (
+        "office break room" if ("break room" in low or "break-room" in low or "office" in low) else "studio"
+    )
+    env_props = [p for p in ("table", "chairs", "coffee cup", "coffee cups", "monitors", "holographic dashboard") if p in low]
     anim_style = "3d_stylized" if any(k in low for k in ("3d", "pixar", "blender", "cgi")) else "auto"
 
     return {
@@ -389,9 +448,12 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
                 flags=re.IGNORECASE,
             )
             if m_inline:
-                h_line = m_inline.group(1).strip()
-                inline_rest = m_inline.group(2).strip()
-                body_text = f"{inline_rest}\n{body_text}".strip() if body_text else inline_rest
+                cand_rest = m_inline.group(2).strip()
+                # Only split as inline prose if it contains spoken quotes or explicit dialogue narration verbs;
+                # otherwise it is a legitimate scene title (e.g. '## SCENE 1: INTRODUCTION (5.3s)').
+                if '"' in cand_rest or '“' in cand_rest or re.search(r"\b(?:says|replies|shouts|asks|exclaims|says:|says,)\b", cand_rest, flags=re.IGNORECASE):
+                    h_line = m_inline.group(1).strip()
+                    body_text = f"{cand_rest}\n{body_text}".strip() if body_text else cand_rest
             blocks.append((h_line, body_text))
     elif re.search(r"(?:\*\*)?\s*(?:VISUAL|NARRATION|VO|DIALOGUE|NARRATOR)\s*:", normalized, flags=re.IGNORECASE):
         # Structured content without explicit scene headings - parse as single/intro scene
@@ -487,11 +549,21 @@ def parse_structured_screenplay(raw_text: str) -> dict[str, Any]:
             if len(parts) >= 3:
                 cam_move = parts[2]
 
-        # Determine primary speaker/voice casting per scene
+        # Determine primary speaker/voice casting and per-turn voice direction
+        from backend.orchestration.audio_studio import resolve_neural_voice
         if scene_turns:
+            for turn_idx, turn in enumerate(scene_turns):
+                t_spk = turn.get("speaker") or "Narrator"
+                _, t_gender = resolve_neural_voice(t_spk)
+                turn["gender"] = t_gender
+                if t_gender == "female":
+                    turn["voice_id"] = "narrator_warm" if turn_idx % 2 == 0 else "character_4"
+                else:
+                    turn["voice_id"] = "character_1" if t_spk.lower() in ("mark", "boss", "david") or turn_idx % 2 == 0 else "character_2"
+
             speaker_name = scene_turns[0]["speaker"]
-            voice_gender = "male"
-            voice_id = "character_1"
+            _, voice_gender = resolve_neural_voice(speaker_name)
+            voice_id = scene_turns[0].get("voice_id") or ("narrator_warm" if voice_gender == "female" else "character_1")
         elif header_voice_gender == "male":
             voice_gender = "male"
             voice_id = "narrator_deep"

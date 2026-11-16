@@ -42,25 +42,67 @@ _EDGE_NEURAL_VOICES: dict[str, str] = {
     "female_lead": "en-US-JennyNeural",
     "male_executive": "en-US-ChristopherNeural",
     "female_british": "en-GB-SoniaNeural",
+    "sarah": "en-US-AriaNeural",
+    "maya": "en-US-JennyNeural",
+    "elena": "en-US-AriaNeural",
+    "emily": "en-US-AriaNeural",
+    "anna": "en-US-JennyNeural",
+    "emma": "en-US-JennyNeural",
+    "clara": "en-GB-SoniaNeural",
+    "mark": "en-US-ChristopherNeural",
+    "alex": "en-US-GuyNeural",
+    "david": "en-US-ChristopherNeural",
+    "john": "en-US-ChristopherNeural",
+    "liam": "en-GB-RyanNeural",
+    "sam": "en-GB-RyanNeural",
     "hindi": "hi-IN-MadhurNeural",
     "hindi_male": "hi-IN-MadhurNeural",
     "hindi_female": "hi-IN-SwaraNeural",
 }
 
+_FEMALE_NAME_KEYWORDS = (
+    "sarah", "maya", "aria", "jenny", "sonia", "swara", "emily", "anna", "emma",
+    "olivia", "sophia", "jessica", "rachel", "maria", "elena", "lisa", "clara",
+    "female", "woman", "girl", "mother", "sister", "actress", "cto sarah", "co-founder sarah"
+)
+
+_MALE_NAME_KEYWORDS = (
+    "mark", "alex", "guy", "male", "man", "chris", "christopher", "david", "john",
+    "liam", "sam", "ryan", "michael", "james", "robert", "boss", "employee", "friend",
+    "boy", "father", "brother", "actor", "lead engineer mark", "engineer mark"
+)
+
 
 def resolve_neural_voice(voice_id: str = "default", language: str = "en") -> tuple[str, str]:
     """Return (edge_neural_voice_name, gender) for the requested voice_id and language."""
     vid = (voice_id or "default").strip()
+    low_vid = vid.lower()
     if vid.startswith("edge:"):
         custom = vid.split(":", 1)[1].strip()
         gender = "female" if any(f in custom.lower() for f in ("aria", "jenny", "sonia", "swara", "natasha", "clara")) else "male"
         return custom, gender
     if language == "hi":
-        if vid in ("narrator_warm", "female", "female_narrator", "character_2", "female_lead", "hindi_female"):
+        if vid in ("narrator_warm", "female", "female_narrator", "character_4", "female_lead", "hindi_female") or any(f in low_vid for f in _FEMALE_NAME_KEYWORDS):
             return "hi-IN-SwaraNeural", "female"
         return "hi-IN-MadhurNeural", "male"
+
+    if low_vid in _EDGE_NEURAL_VOICES:
+        edge_voice = _EDGE_NEURAL_VOICES[low_vid]
+        gender = "female" if (
+            low_vid in ("narrator_warm", "female", "female_narrator", "character_4", "female_lead", "female_british")
+            or any(f in low_vid for f in _FEMALE_NAME_KEYWORDS)
+            or any(f in edge_voice.lower() for f in ("aria", "jenny", "sonia", "swara"))
+        ) else "male"
+        return edge_voice, gender
+
+    # Contextual name / gender inference if not in explicit table
+    if any(f in low_vid for f in _FEMALE_NAME_KEYWORDS):
+        return "en-US-AriaNeural", "female"
+    if any(m in low_vid for m in _MALE_NAME_KEYWORDS):
+        return "en-US-ChristopherNeural", "male"
+
     edge_voice = _EDGE_NEURAL_VOICES.get(vid, "en-US-ChristopherNeural")
-    gender = "female" if vid in ("narrator_warm", "female", "female_narrator", "character_2", "female_lead", "female_british") else "male"
+    gender = "female" if vid in ("narrator_warm", "female", "female_narrator", "character_4", "female_lead", "female_british") else "male"
     return edge_voice, gender
 
 
@@ -152,8 +194,8 @@ def sanitize_spoken_voiceover(raw_text: str, default: str = "Silence.") -> str:
 
     # 4b. Strip character speaker prefixes like 'NARRATOR: ' or 'Alex: ' or 'NAPOLEON: '
     text = re.sub(r"^(?:[A-Za-z][A-Za-z0-9_\s]{1,32}\s*:\s*)+", "", text.strip())
-    # Strip any residual leading character name or perspective label with colon/dash after guide removal
-    text = re.sub(r"(?i)^(?:\s*(?:[A-Za-z0-9_\s'\-]{1,36})\s*[:\-]\s*)+", "", text)
+    # Strip any residual leading character name or perspective label with colon or spaced dash after guide removal
+    text = re.sub(r"(?i)^(?:\s*(?:[A-Za-z0-9_]{1,24})\s*(?::\s*|\s+[-–—]\s+))+", "", text)
     # Also strip embedded speaker labels e.g. "Maya: I agree." if pasted into one block
     text = re.sub(r"(?i)(?<=\.)\s*(?:[A-Za-z0-9_\s]{1,24})\s*:\s*", " ", text)
     text = re.sub(r"(?i)^(?:for|about|on|of|with|in)\s+", "", text)
@@ -204,6 +246,25 @@ def generate_tts(
             "voice_used": "none",
             "reason": "Silent or empty dialogue text; refusing to treat silence as spoken dialogue.",
         }
+
+    # Hugging Face Open-Source Voice Models (Zonos-v0.3-Mini, OmniVoice, Fish Audio Drama 3)
+    if voice_id.startswith(("zonos", "omnivoice", "drama", "fish", "hf:")) or any(k in voice_id.lower() for k in ("zonos", "omnivoice", "drama", "fishaudio")):
+        from backend.services.huggingface_voice_service import generate_speech_with_huggingface_voice
+        if "drama" in voice_id.lower() or "fish" in voice_id.lower():
+            model_name = "fishaudio/drama-3"
+        elif "zonos" in voice_id.lower():
+            model_name = "Zyphra/ZONOS3-Mini"
+        else:
+            model_name = "k2-fsa/OmniVoice"
+        hf_voice_res = generate_speech_with_huggingface_voice(
+            model_key_or_repo=model_name,
+            text=clean_text,
+            output_wav=output_wav,
+            voice_id=voice_id,
+            language=language,
+        )
+        if hf_voice_res.get("success"):
+            return hf_voice_res
 
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not free_mode and openai_key and voice_id.startswith("openai:"):

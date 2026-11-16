@@ -182,11 +182,13 @@ class AntigravityAdapter:
         # antigravity_video is discovery-only until an MCP caller exists; do not enqueue a tier nothing runs.
         if any(creds.get(k) for k in ("GOOGLE_API_KEY", "RUNWAY_API_KEY", "KLING_API_KEY", "FAL_KEY", "FAL_AI_API_KEY", "REPLICATE_API_TOKEN", "ARK_API_KEY")):
             chain.append("cloud_video")
-        if requested_engine in ("threejs", "blender", "remotion", "hyperframes"):
+        if requested_engine in ("threejs", "blender", "remotion", "hyperframes", "huggingface"):
             chain.append(requested_engine)
-        if requested_engine == "blender":
-            # Never silently replace requested 3D Blender rendering with 2D or archival footage
-            return ["blender"]
+        elif requested_engine and (str(requested_engine).startswith("hf_") or any(k in requested_engine.lower() for k in ("hyperflow", "wan", "pan2", "minimax", "dmad"))):
+            chain.append("huggingface")
+        if requested_engine in ("blender", "hyperframes", "huggingface") or any(k in str(requested_engine).lower() for k in ("hyperflow", "wan", "pan2", "minimax", "dmad", "hf_")):
+            # Never silently replace explicitly requested engines with archival footage
+            return ["huggingface" if ("huggingface" in chain or "huggingface" in str(requested_engine) or any(k in str(requested_engine).lower() for k in ("hyperflow", "wan", "pan2", "minimax", "dmad", "hf_"))) else requested_engine]
         if cat in ("3d_animation", "3d_render", "architecture", "product_demo"):
             for eng in ("blender", "threejs"):
                 if eng not in chain:

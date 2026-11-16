@@ -92,6 +92,26 @@ def _build_cuts_from_scene(scene: dict[str, Any], duration: float) -> list[dict[
             },
         ]
 
+    if duration >= 3.0:
+        mid = round(duration * 0.48, 3)
+        return [
+            {
+                "type": "hero_title",
+                "text": title,
+                "heroSubtitle": visual or title,
+                "in_seconds": 0,
+                "out_seconds": mid,
+            },
+            {
+                "type": "callout",
+                "title": title,
+                "text": visual or title,
+                "callout_type": "info",
+                "in_seconds": mid,
+                "out_seconds": round(duration, 3),
+            },
+        ]
+
     return [
         {
             "type": "hero_title",

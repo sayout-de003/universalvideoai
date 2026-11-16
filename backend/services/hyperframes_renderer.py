@@ -970,18 +970,157 @@ function drawRobotCharacter(ctx, cx, cy, scale, t, p) {
 }
 
 const CONVERSATIONAL_CAST = {
-  alex: { suit: "#1e3a8a", rim: "#93c5fd", skin: "#fde68a", hair: "#451a03", glasses: false },
-  maya: { suit: "#9d174d", rim: "#fbcfe8", skin: "#fed7aa", hair: "#1f2937", glasses: false },
-  sam: { suit: "#065f46", rim: "#6ee7b7", skin: "#fcd34d", hair: "#78350f", glasses: true },
-  liam: { suit: "#065f46", rim: "#6ee7b7", skin: "#fcd34d", hair: "#78350f", glasses: true },
+  alex: { suit: "#1e3a8a", rim: "#93c5fd", skin: "#fde68a", hair: "#1f2937", glasses: false, type: "suit" },
+  maya: { suit: "#9d174d", rim: "#fbcfe8", skin: "#fed7aa", hair: "#1f2937", glasses: false, type: "blazer" },
+  sam: { suit: "#065f46", rim: "#6ee7b7", skin: "#fcd34d", hair: "#78350f", glasses: true, type: "hoodie" },
+  liam: { suit: "#0f766e", rim: "#5eead4", skin: "#fcd34d", hair: "#78350f", glasses: true, type: "hoodie" },
+  boss: { suit: "#1e1b4b", rim: "#818cf8", skin: "#c084fc", hair: "#0f172a", glasses: false, type: "suit" },
+  employee: { suit: "#0284c7", rim: "#7dd3fc", skin: "#d8b4fe", hair: "#1e293b", glasses: false, type: "shirt" },
+  friend: { suit: "#0f766e", rim: "#5eead4", skin: "#a855f7", hair: "#111827", glasses: false, type: "jacket" },
+  sarah: { suit: "#1e3a8a", rim: "#38bdf8", skin: "#fed7aa", hair: "#3f2e21", glasses: true, type: "blazer", role: "CTO" },
+  mark: { suit: "#334155", rim: "#94a3b8", skin: "#fde68a", hair: "#1e293b", glasses: false, type: "hoodie", role: "Lead Engineer" },
+  david: { suit: "#334155", rim: "#cbd5e1", skin: "#fcd34d", hair: "#451a03", glasses: true, type: "suit" },
+  founder: { suit: "#0f172a", rim: "#38bdf8", skin: "#fde68a", hair: "#18181b", glasses: false, type: "blazer" },
+  investor: { suit: "#1e293b", rim: "#f59e0b", skin: "#fed7aa", hair: "#3f3f46", glasses: true, type: "suit" },
 };
 
-function _resolveCastStyle(name, fallbackKey) {
+function _resolveCastStyle(name, fallbackKey, desc) {
   const low = (name || "").toLowerCase();
+  const descLow = (desc || "").toLowerCase();
+  let base = null;
   for (const key of Object.keys(CONVERSATIONAL_CAST)) {
-    if (low.includes(key)) return CONVERSATIONAL_CAST[key];
+    if (low.includes(key)) {
+      base = { ...CONVERSATIONAL_CAST[key] };
+      break;
+    }
   }
-  return CONVERSATIONAL_CAST[fallbackKey] || CONVERSATIONAL_CAST.alex;
+  if (!base) {
+    let h = 0;
+    for (let i = 0; i < low.length; i++) h = (h * 31 + low.charCodeAt(i)) & 0xffffffff;
+    const suits = ["#1e3a8a", "#0f766e", "#7c2d12", "#4338ca", "#047857", "#9f1239", "#1e293b", "#2563eb"];
+    const rims = ["#93c5fd", "#5eead4", "#fdba74", "#a5b4fc", "#6ee7b7", "#fca5a5", "#94a3b8", "#60a5fa"];
+    const skins = ["#fed7aa", "#fde68a", "#fcd34d", "#d8b4fe", "#fed7aa"];
+    const hairs = ["#1f2937", "#451a03", "#78350f", "#0f172a", "#374151"];
+    const idx = Math.abs(h);
+    base = {
+      suit: suits[idx % suits.length],
+      rim: rims[idx % rims.length],
+      skin: skins[idx % skins.length],
+      hair: hairs[idx % hairs.length],
+      glasses: (idx % 3) === 0,
+      type: "suit",
+    };
+  }
+  if (descLow.includes("glasses")) base.glasses = true;
+  if (descLow.includes("navy blazer") || descLow.includes("blazer")) {
+    base.suit = "#1e3a8a";
+    base.type = "blazer";
+  }
+  if (descLow.includes("hoodie") || descLow.includes("charcoal")) {
+    base.suit = "#334155";
+    base.type = "hoodie";
+  }
+  return base;
+}
+
+function drawTechSaaSBackground(ctx, w, h, t, p) {
+  const bg = ctx.createLinearGradient(0, 0, w, h);
+  bg.addColorStop(0, "#030712");
+  bg.addColorStop(0.5, "#0b1329");
+  bg.addColorStop(1, "#020617");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+
+  // Animated perspective tech grid
+  ctx.strokeStyle = "rgba(56, 189, 248, 0.12)";
+  ctx.lineWidth = 1.2;
+  const gridY = h * 0.44;
+  for (let x = 0; x <= w; x += 60) {
+    ctx.beginPath();
+    ctx.moveTo(x, gridY);
+    ctx.lineTo(w * 0.5 + (x - w * 0.5) * 2.2, h);
+    ctx.stroke();
+  }
+  const gridScroll = (t * 40) % 32;
+  for (let y = gridY; y <= h; y += 32) {
+    const curY = y + gridScroll;
+    if (curY <= h) {
+      ctx.beginPath();
+      ctx.moveTo(0, curY);
+      ctx.lineTo(w, curY);
+      ctx.stroke();
+    }
+  }
+
+  // Floating SaaS Dashboard Card in background
+  const cardW = w * 0.72;
+  const cardH = h * 0.44;
+  const cardX = w * 0.14;
+  const cardY = h * 0.08;
+
+  ctx.fillStyle = "rgba(15, 23, 42, 0.82)";
+  ctx.beginPath();
+  ctx.roundRect(cardX, cardY, cardW, cardH, 16);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Dashboard Header Bar
+  ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
+  ctx.beginPath();
+  ctx.roundRect(cardX, cardY, cardW, 36, [16, 16, 0, 0]);
+  ctx.fill();
+
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = ["#ef4444", "#f59e0b", "#10b981"][i];
+    ctx.beginPath();
+    ctx.arc(cardX + 22 + i * 16, cardY + 18, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = "#38bdf8";
+  ctx.font = "bold 13px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillText("UNIVERSAL AI VIDEO CLOUD ENGINE // LIVE TELEMETRY", cardX + 78, cardY + 22);
+
+  // Live Animated Performance Metric Wave
+  ctx.strokeStyle = "#38bdf8";
+  ctx.lineWidth = 3.2;
+  ctx.beginPath();
+  for (let x = 0; x < cardW - 60; x += 8) {
+    const normX = x / (cardW - 60);
+    const wave = Math.sin((normX * 12.0) + t * 4.2) * 22 + Math.cos((normX * 6.5) - t * 2.8) * 12;
+    const py = cardY + cardH * 0.56 + wave;
+    if (x === 0) ctx.moveTo(cardX + 30 + x, py);
+    else ctx.lineTo(cardX + 30 + x, py);
+  }
+  ctx.stroke();
+
+  // Live Metric Badges
+  const badges = [
+    { label: "PIPELINE UPTIME", val: "99.98%", col: "#10b981" },
+    { label: "RENDER THROUGHPUT", val: "120 FPS", col: "#38bdf8" },
+    { label: "VOICEOVER SYNC", val: "100.0%", col: "#a855f7" }
+  ];
+  const bW = (cardW - 60) / 3;
+  badges.forEach((b, idx) => {
+    const bx = cardX + 24 + idx * (bW + 6);
+    const by = cardY + cardH * 0.70;
+    ctx.fillStyle = "rgba(15, 23, 42, 0.75)";
+    ctx.beginPath();
+    ctx.roundRect(bx, by, bW, 38, 8);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "9px -apple-system, sans-serif";
+    ctx.fillText(b.label, bx + 10, by + 14);
+    ctx.fillStyle = b.col;
+    ctx.font = "bold 13px -apple-system, sans-serif";
+    ctx.fillText(b.val, bx + 10, by + 30);
+  });
 }
 
 function drawOfficeConferenceBackground(ctx, w, h, t, p) {
@@ -1074,12 +1213,18 @@ function drawOfficeConferenceBackground(ctx, w, h, t, p) {
   ctx.stroke();
 }
 
-function drawConferenceTableForeground(ctx, w, h, t) {
+function drawConferenceTableForeground(ctx, w, h, t, isTech) {
   const tableY = h * 0.73;
   const tableGrad = ctx.createLinearGradient(0, tableY, 0, h);
-  tableGrad.addColorStop(0, "#3f2e21");
-  tableGrad.addColorStop(0.18, "#291d14");
-  tableGrad.addColorStop(1, "#110c08");
+  if (isTech) {
+    tableGrad.addColorStop(0, "#0f172a");
+    tableGrad.addColorStop(0.35, "#090d16");
+    tableGrad.addColorStop(1, "#020617");
+  } else {
+    tableGrad.addColorStop(0, "#3f2e21");
+    tableGrad.addColorStop(0.18, "#291d14");
+    tableGrad.addColorStop(1, "#110c08");
+  }
   ctx.fillStyle = tableGrad;
   ctx.beginPath();
   ctx.moveTo(w * 0.06, tableY);
@@ -1090,8 +1235,8 @@ function drawConferenceTableForeground(ctx, w, h, t) {
   ctx.fill();
 
   // Polished table rim highlight
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = isTech ? "#38bdf8" : "rgba(255, 255, 255, 0.16)";
+  ctx.lineWidth = isTech ? 2.5 : 3;
   ctx.beginPath();
   ctx.moveTo(w * 0.06, tableY);
   ctx.lineTo(w * 0.94, tableY);
@@ -1105,7 +1250,7 @@ function drawConferenceTableForeground(ctx, w, h, t) {
     ctx.fillRect(px - 32, tableY + 12, 64, 8);
     ctx.fillStyle = idx === 1 ? "#1e293b" : "#334155";
     ctx.fillRect(px - 28, tableY - 22, 56, 34);
-    ctx.fillStyle = "rgba(56, 189, 248, 0.35)";
+    ctx.fillStyle = isTech ? "rgba(56, 189, 248, 0.65)" : "rgba(56, 189, 248, 0.35)";
     ctx.fillRect(px - 24, tableY - 18, 48, 26);
 
     // Coffee mug
@@ -1121,7 +1266,7 @@ function drawConferenceTableForeground(ctx, w, h, t) {
 }
 
 function drawConversationalCharacter(ctx, cx, cy, scale, t, opts) {
-  const style = _resolveCastStyle(opts.name, opts.fallbackKey || "alex");
+  const style = _resolveCastStyle(opts.name, opts.fallbackKey || "alex", opts.desc || "");
   const isSpeaking = Boolean(opts.isSpeaking && CHARACTER_META && CHARACTER_META.has_speech);
   const lookDir = opts.lookDir || 0; // -1 left, 0 center, 1 right
   const breath = Math.sin(t * 2.1 + (opts.phase || 0)) * 2.2;
@@ -1135,33 +1280,72 @@ function drawConversationalCharacter(ctx, cx, cy, scale, t, opts) {
   ctx.scale(scale, scale);
 
   // Ergonomic chair back behind character
-  ctx.fillStyle = "#1e293b";
+  ctx.fillStyle = "#0f172a";
   ctx.beginPath();
-  ctx.roundRect(-42, -52, 84, 108, 18);
+  ctx.roundRect(-42, -54, 84, 110, 18);
   ctx.fill();
-  ctx.strokeStyle = "#475569";
+  ctx.strokeStyle = "#334155";
   ctx.lineWidth = 2.5;
   ctx.stroke();
 
-  // Torso / Suit
+  // Torso / Wardrobe
   const torsoGrad = ctx.createLinearGradient(-34, -8, 34, 85);
   torsoGrad.addColorStop(0, style.suit);
-  torsoGrad.addColorStop(1, "#0f172a");
+  torsoGrad.addColorStop(1, "#090d16");
   ctx.fillStyle = torsoGrad;
   ctx.beginPath();
   ctx.roundRect(-34, -6, 68, 90, 18);
   ctx.fill();
 
-  // Shirt V-neck & collar
-  ctx.fillStyle = "#f8fafc";
-  ctx.beginPath();
-  ctx.moveTo(-12, -6);
-  ctx.lineTo(0, 26);
-  ctx.lineTo(12, -6);
-  ctx.closePath();
-  ctx.fill();
+  // Inner Shirt / Top / V-neck
+  if (style.type === "hoodie") {
+    ctx.fillStyle = "#1e293b";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 20, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#e2e8f0";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-6, 6);
+    ctx.lineTo(-6 + Math.sin(t * 2.5) * 1.5, 34);
+    ctx.moveTo(6, 6);
+    ctx.lineTo(6 + Math.sin(t * 2.5 + 1) * 1.5, 34);
+    ctx.stroke();
+  } else if (style.type === "blazer") {
+    ctx.fillStyle = "#f8fafc";
+    ctx.beginPath();
+    ctx.moveTo(-10, -6);
+    ctx.lineTo(0, 24);
+    ctx.lineTo(10, -6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = style.rim || "#38bdf8";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(-22, -6);
+    ctx.lineTo(-4, 28);
+    ctx.moveTo(22, -6);
+    ctx.lineTo(4, 28);
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = "#f8fafc";
+    ctx.beginPath();
+    ctx.moveTo(-12, -6);
+    ctx.lineTo(0, 26);
+    ctx.lineTo(12, -6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#991b1b";
+    ctx.beginPath();
+    ctx.moveTo(0, 2);
+    ctx.lineTo(-5, 45);
+    ctx.lineTo(0, 52);
+    ctx.lineTo(5, 45);
+    ctx.closePath();
+    ctx.fill();
+  }
 
-  // Articulated conversational arms & hands
+  // Articulated arms & hands
   ctx.strokeStyle = style.suit;
   ctx.lineWidth = 14;
   ctx.lineCap = "round";
@@ -1187,7 +1371,12 @@ function drawConversationalCharacter(ctx, cx, cy, scale, t, opts) {
   ctx.translate(0, -42);
   ctx.rotate(nod + lookDir * 0.05);
 
-  const headGrad = ctx.createRadialGradient(-8, -8, 6, 0, 0, 36);
+  // Neck
+  ctx.fillStyle = style.skin;
+  ctx.fillRect(-9, 18, 18, 16);
+
+  // Head base with skin radial gradient
+  const headGrad = ctx.createRadialGradient(-6, -6, 6, 0, 0, 34);
   headGrad.addColorStop(0, style.skin);
   headGrad.addColorStop(1, "#d97706");
   ctx.fillStyle = headGrad;
@@ -1195,16 +1384,38 @@ function drawConversationalCharacter(ctx, cx, cy, scale, t, opts) {
   ctx.arc(0, 0, 31, 0, Math.PI * 2);
   ctx.fill();
 
-  // Hair
+  // Hair - dynamic styling based on character
   ctx.fillStyle = style.hair;
-  ctx.beginPath();
-  ctx.arc(0, -8, 32, Math.PI, Math.PI * 2);
-  ctx.fill();
+  if (style.type === "blazer" || (opts.name || "").toLowerCase().includes("sarah") || (opts.name || "").toLowerCase().includes("maya")) {
+    ctx.beginPath();
+    ctx.arc(0, -6, 33, Math.PI * 0.95, Math.PI * 2.05);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-32, -4);
+    ctx.quadraticCurveTo(-36, 24, -28, 42);
+    ctx.lineTo(-20, 38);
+    ctx.quadraticCurveTo(-26, 18, -26, -4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(32, -4);
+    ctx.quadraticCurveTo(36, 24, 28, 42);
+    ctx.lineTo(20, 38);
+    ctx.quadraticCurveTo(26, 18, 26, -4);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.arc(0, -8, 33, Math.PI, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(-32, -6, 5, 14);
+    ctx.fillRect(27, -6, 5, 14);
+  }
 
   // Expressive eyebrows
-  const browLift = isSpeaking ? -2.5 * talkAmp : 0;
+  const browLift = isSpeaking ? -3.0 * talkAmp : 0;
   ctx.strokeStyle = style.hair;
-  ctx.lineWidth = 2.6;
+  ctx.lineWidth = 2.8;
   ctx.beginPath();
   ctx.moveTo(-16, -13 + browLift);
   ctx.lineTo(-5, -14 + browLift);
@@ -1212,52 +1423,395 @@ function drawConversationalCharacter(ctx, cx, cy, scale, t, opts) {
   ctx.lineTo(16, -13 + browLift);
   ctx.stroke();
 
-  // Eyes + gaze tracking
-  const gazeX = lookDir * 2.2;
+  // Eyes with colored iris, pupil, and specular highlight
+  const gazeX = lookDir * 2.4;
   ctx.fillStyle = "#ffffff";
   ctx.beginPath();
-  ctx.ellipse(-10, -4, 5.5, 5.5 * blink, 0, 0, Math.PI * 2);
-  ctx.ellipse(10, -4, 5.5, 5.5 * blink, 0, 0, Math.PI * 2);
+  ctx.ellipse(-10, -4, 5.8, 5.8 * blink, 0, 0, Math.PI * 2);
+  ctx.ellipse(10, -4, 5.8, 5.8 * blink, 0, 0, Math.PI * 2);
   ctx.fill();
-  if (blink > 0.4) {
-    ctx.fillStyle = "#0f172a";
+  if (blink > 0.35) {
+    ctx.fillStyle = "#38bdf8";
     ctx.beginPath();
-    ctx.arc(-10 + gazeX, -4, 2.7, 0, Math.PI * 2);
-    ctx.arc(10 + gazeX, -4, 2.7, 0, Math.PI * 2);
+    ctx.arc(-10 + gazeX, -4, 3.2, 0, Math.PI * 2);
+    ctx.arc(10 + gazeX, -4, 3.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#090d16";
+    ctx.beginPath();
+    ctx.arc(-10 + gazeX, -4, 2.0, 0, Math.PI * 2);
+    ctx.arc(10 + gazeX, -4, 2.0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(-10 + gazeX - 1.1, -5.1, 1.1, 0, Math.PI * 2);
+    ctx.arc(10 + gazeX - 1.1, -5.1, 1.1, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Optional glasses (Sam / Liam)
+  // Modern Glasses with subtle glare
   if (style.glasses) {
     ctx.strokeStyle = "#cbd5e1";
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2.2;
     ctx.strokeRect(-18, -10, 15, 11);
     ctx.strokeRect(3, -10, 15, 11);
     ctx.beginPath();
     ctx.moveTo(-3, -5);
     ctx.lineTo(3, -5);
     ctx.stroke();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.45)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(-16, -8);
+    ctx.lineTo(-8, -2);
+    ctx.moveTo(5, -8);
+    ctx.lineTo(13, -2);
+    ctx.stroke();
   }
 
-  // Real facial lip-sync mouth directly on the face (y = +14 relative to head)
-  if (talkAmp > 0.08) {
-    ctx.fillStyle = "#450a0a";
+  // Real facial lip-sync mouth with teeth, tongue, and visemes
+  if (talkAmp > 0.06) {
+    const mouthW = 7.5 + talkAmp * 3.5;
+    const mouthH = 2.8 + talkAmp * 6.5;
+    ctx.fillStyle = "#3b0712";
     ctx.beginPath();
-    ctx.ellipse(0, 14, 7.5 + talkAmp * 2.5, 2.5 + talkAmp * 6.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 14, mouthW, mouthH, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(-mouthW * 0.55, 14 - mouthH * 0.85, mouthW * 1.1, Math.max(2, mouthH * 0.45));
+    ctx.fillStyle = "#fb7185";
+    ctx.beginPath();
+    ctx.ellipse(0, 14 + mouthH * 0.35, mouthW * 0.6, mouthH * 0.45, 0, 0, Math.PI);
     ctx.fill();
     ctx.strokeStyle = "#9f1239";
     ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.ellipse(0, 14, mouthW, mouthH, 0, 0, Math.PI * 2);
     ctx.stroke();
   } else {
     ctx.strokeStyle = "#7c2d12";
     ctx.lineWidth = 2.2;
     ctx.beginPath();
-    ctx.arc(0, 12, 7, 0.2, Math.PI - 0.2);
+    ctx.arc(0, 12, 6.5, 0.2, Math.PI - 0.2);
     ctx.stroke();
   }
 
   ctx.restore();
   ctx.restore();
+}
+
+function getActiveSpeakerAtTime(t) {
+  const turns = (CHARACTER_META && CHARACTER_META.turns) || [];
+  if (Array.isArray(turns) && turns.length > 0) {
+    for (const tr of turns) {
+      if (t >= tr.start_sec && t <= tr.end_sec) {
+        return (tr.speaker || "").toLowerCase();
+      }
+    }
+    return "";
+  }
+  if (CHARACTER_META && CHARACTER_META.has_speech) {
+    return ((CHARACTER_META.speaker || "") + "").toLowerCase();
+  }
+  return "";
+}
+
+function drawSaaSSceneWideIntro(ctx, w, h, t, p, isTech) {
+  drawTechSaaSBackground(ctx, w, h, t, p);
+  const seatY = h * 0.65;
+  const seatScale = (Math.min(w, h) / 680) * 1.15;
+  const activeSpk = getActiveSpeakerAtTime(t);
+  const leadName = (CHARACTER_META && CHARACTER_META.name) || "Sarah";
+  const partnerName = (CHARACTER_META && CHARACTER_META.partner) || "Mark";
+
+  const leadSpeaking = activeSpk ? activeSpk.includes(leadName.toLowerCase()) : true;
+  const partnerSpeaking = activeSpk ? activeSpk.includes(partnerName.toLowerCase()) : false;
+
+  drawConversationalCharacter(ctx, w * 0.34, seatY, seatScale, t, {
+    name: leadName,
+    fallbackKey: "sarah",
+    desc: "CTO, wearing a navy blazer and glasses",
+    isSpeaking: leadSpeaking,
+    lookDir: partnerSpeaking ? 1 : 0.4,
+    phase: 0,
+  });
+  drawConversationalCharacter(ctx, w * 0.66, seatY, seatScale, t, {
+    name: partnerName,
+    fallbackKey: "mark",
+    desc: "Lead Engineer, wearing a charcoal hoodie",
+    isSpeaking: partnerSpeaking,
+    lookDir: leadSpeaking ? -1 : -0.4,
+    phase: 2.3,
+  });
+
+  drawConferenceTableForeground(ctx, w, h, t, true);
+}
+
+function drawSaaSSpeakerSpotlight(ctx, w, h, t, p) {
+  // Dark cinematic tech background with server rack neon indicators & soft bokeh
+  const bg = ctx.createLinearGradient(0, 0, w, h);
+  bg.addColorStop(0, "#020617");
+  bg.addColorStop(0.6, "#0b1329");
+  bg.addColorStop(1, "#030712");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+
+  // Background server rack lights
+  ctx.fillStyle = "rgba(15, 23, 42, 0.75)";
+  ctx.fillRect(w * 0.05, h * 0.08, w * 0.38, h * 0.75);
+  for (let r = 0; r < 7; r++) {
+    const ry = h * 0.12 + r * 56;
+    ctx.strokeStyle = "rgba(56, 189, 248, 0.18)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(w * 0.07, ry, w * 0.34, 44);
+    for (let c = 0; c < 8; c++) {
+      const lit = (Math.sin(t * 5.0 + r * 2 + c) > 0.1);
+      ctx.fillStyle = lit ? (c % 2 === 0 ? "#10b981" : "#38bdf8") : "#1e293b";
+      ctx.fillRect(w * 0.09 + c * 18, ry + 18, 8, 8);
+    }
+  }
+
+  // Floating Glassmorphic Holographic Cards on Right
+  const cardX = w * 0.52;
+  const cardW = w * 0.42;
+
+  // Card 1: 30 FPS Cloud Engine
+  const c1Y = h * 0.12;
+  ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+  ctx.beginPath();
+  ctx.roundRect(cardX, c1Y, cardW, 95, 14);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(56, 189, 248, 0.45)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = "#38bdf8";
+  ctx.font = "bold 15px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillText("⚡ 30 FPS CLOUD VIDEO ENGINE", cardX + 22, c1Y + 32);
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = "12px -apple-system, sans-serif";
+  ctx.fillText("Real-time distributed compositor in the cloud", cardX + 22, c1Y + 54);
+  // Animated progress bar
+  ctx.fillStyle = "#1e293b";
+  ctx.beginPath();
+  ctx.roundRect(cardX + 22, c1Y + 68, cardW - 44, 8, 4);
+  ctx.fill();
+  ctx.fillStyle = "#38bdf8";
+  ctx.beginPath();
+  const fillW = (cardW - 44) * (0.65 + Math.sin(t * 3.5) * 0.25);
+  ctx.roundRect(cardX + 22, c1Y + 68, fillW, 8, 4);
+  ctx.fill();
+
+  // Card 2: Sub-millisecond Voice Sync with Real-Time Audio Equalizer Bars
+  const c2Y = h * 0.38;
+  ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+  ctx.beginPath();
+  ctx.roundRect(cardX, c2Y, cardW, 110, 14);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(168, 85, 247, 0.45)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = "#c084fc";
+  ctx.font = "bold 15px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillText("🎙️ SUB-MILLISECOND VOICE SYNC", cardX + 22, c2Y + 32);
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = "12px -apple-system, sans-serif";
+  ctx.fillText("Phonetic viseme alignment & neural vocal contrast", cardX + 22, c2Y + 54);
+
+  // 12 Animated Bouncing Equalizer Bars
+  const eqX = cardX + 22;
+  const eqY = c2Y + 70;
+  for (let b = 0; b < 14; b++) {
+    const barH = 8 + Math.abs(Math.sin(t * 8.5 + b * 0.7)) * 24;
+    const barGrad = ctx.createLinearGradient(0, eqY + 28 - barH, 0, eqY + 28);
+    barGrad.addColorStop(0, "#a855f7");
+    barGrad.addColorStop(1, "#38bdf8");
+    ctx.fillStyle = barGrad;
+    ctx.fillRect(eqX + b * 18, eqY + 28 - barH, 11, barH);
+  }
+
+  // Card 3: Instant Automated SaaS Production
+  const c3Y = h * 0.68;
+  ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+  ctx.beginPath();
+  ctx.roundRect(cardX, c3Y, cardW, 90, 14);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(16, 185, 129, 0.45)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = "#34d399";
+  ctx.font = "bold 15px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillText("🚀 INSTANT AUTOMATED PRODUCTION", cardX + 22, c3Y + 32);
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = "12px -apple-system, sans-serif";
+  ctx.fillText("One-click pipeline execution for every SaaS team", cardX + 22, c3Y + 54);
+  ctx.fillStyle = "#10b981";
+  ctx.font = "bold 12px -apple-system, sans-serif";
+  ctx.fillText("● 100% AUTOMATED QA VERIFIED", cardX + 22, c3Y + 72);
+
+  // Prominent foreground speaker on left (scaled ~1.65x)
+  const spkName = (CHARACTER_META && CHARACTER_META.speaker) || (CHARACTER_META && CHARACTER_META.name) || "Mark";
+  const seatScale = (Math.min(w, h) / 680) * 1.65;
+  drawConversationalCharacter(ctx, w * 0.28, h * 0.65, seatScale, t, {
+    name: spkName,
+    fallbackKey: "mark",
+    desc: spkName.toLowerCase().includes("sarah") ? "navy blazer and glasses" : "charcoal hoodie",
+    isSpeaking: true,
+    lookDir: 0.8,
+    phase: 0,
+  });
+
+  // Table Foreground
+  drawConferenceTableForeground(ctx, w, h, t, true);
+}
+
+function drawSaaSArchitectureDemo(ctx, w, h, t, p) {
+  drawTechSaaSBackground(ctx, w, h, t, p);
+
+  // 4 Connected Pipeline Nodes in center
+  const nodes = [
+    { title: "1. PROMPT & SCRIPT", tag: "Hollywood Engine", x: w * 0.18, col: "#38bdf8" },
+    { title: "2. NEURAL TTS & SYNC", tag: "Edge Neural Visemes", x: w * 0.40, col: "#a855f7" },
+    { title: "3. MULTI-ENGINE RENDER", tag: "Hyperframes / Canvas", x: w * 0.62, col: "#10b981" },
+    { title: "4. INSTANT 4K EXPORT", tag: "Automated QA Passed", x: w * 0.84, col: "#f59e0b" },
+  ];
+  const nodeY = h * 0.38;
+
+  // Animated Glowing Data Stream Line between nodes
+  ctx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(nodes[0].x, nodeY + 30);
+  ctx.lineTo(nodes[3].x, nodeY + 30);
+  ctx.stroke();
+
+  // Moving glowing energy packets
+  for (let pkt = 0; pkt < 5; pkt++) {
+    const pktPos = ((t * 180 + pkt * 140) % (nodes[3].x - nodes[0].x)) + nodes[0].x;
+    ctx.fillStyle = "#38bdf8";
+    ctx.beginPath();
+    ctx.arc(pktPos, nodeY + 30, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Draw nodes
+  nodes.forEach((nd) => {
+    ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+    ctx.beginPath();
+    ctx.roundRect(nd.x - 70, nodeY, 140, 60, 10);
+    ctx.fill();
+    ctx.strokeStyle = nd.col;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 11px -apple-system, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(nd.title, nd.x, nodeY + 24);
+    ctx.fillStyle = nd.col;
+    ctx.font = "10px -apple-system, sans-serif";
+    ctx.fillText(nd.tag, nd.x, nodeY + 44);
+    ctx.textAlign = "left";
+  });
+
+  // Presenter in bottom-left corner
+  const spkName = (CHARACTER_META && CHARACTER_META.speaker) || "Sarah";
+  drawConversationalCharacter(ctx, w * 0.22, h * 0.70, (Math.min(w, h) / 680) * 1.35, t, {
+    name: spkName,
+    fallbackKey: "sarah",
+    isSpeaking: true,
+    lookDir: 0.6,
+  });
+
+  drawConferenceTableForeground(ctx, w, h, t, true);
+}
+
+function drawSaaSCallToAction(ctx, w, h, t, p) {
+  const bg = ctx.createLinearGradient(0, 0, w, h);
+  bg.addColorStop(0, "#020617");
+  bg.addColorStop(0.5, "#0b1329");
+  bg.addColorStop(1, "#030712");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+
+  // Central Glowing SaaS Orbital Badge
+  const badgeX = w * 0.5;
+  const badgeY = h * 0.28;
+  const pulse = Math.sin(t * 3.5) * 6;
+  ctx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(badgeX, badgeY, 55 + pulse, 0, Math.PI * 2);
+  ctx.stroke();
+
+  const bGrad = ctx.createRadialGradient(badgeX, badgeY, 10, badgeX, badgeY, 52);
+  bGrad.addColorStop(0, "#38bdf8");
+  bGrad.addColorStop(1, "#1d4ed8");
+  ctx.fillStyle = bGrad;
+  ctx.beginPath();
+  ctx.arc(badgeX, badgeY, 46, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 32px -apple-system, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("AI", badgeX, badgeY + 11);
+
+  // Hero Headlines
+  ctx.font = "bold 28px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillStyle = "#f8fafc";
+  ctx.fillText("AUTOMATE YOUR VIDEO PRODUCTION", badgeX, h * 0.48);
+
+  ctx.font = "15px -apple-system, sans-serif";
+  ctx.fillStyle = "#94a3b8";
+  ctx.fillText("30 FPS Cloud Engine  •  Sub-Millisecond Voice Sync  •  100% Automated QA", badgeX, h * 0.54);
+
+  // Animated CTA Button
+  const btnW = 240;
+  const btnH = 52;
+  const btnX = badgeX - btnW / 2;
+  const btnY = h * 0.60;
+  const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX + btnW, btnY);
+  btnGrad.addColorStop(0, "#2563eb");
+  btnGrad.addColorStop(1, "#7c3aed");
+  ctx.fillStyle = btnGrad;
+  ctx.beginPath();
+  ctx.roundRect(btnX, btnY, btnW, btnH, 26);
+  ctx.fill();
+  ctx.strokeStyle = "#60a5fa";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 16px -apple-system, sans-serif";
+  ctx.fillText("Get Started Free →", badgeX, btnY + 32);
+  ctx.textAlign = "left";
+
+  // Both founders standing together flanking the hero screen
+  const seatScale = (Math.min(w, h) / 680) * 1.15;
+  drawConversationalCharacter(ctx, w * 0.18, h * 0.68, seatScale, t, {
+    name: "Sarah",
+    fallbackKey: "sarah",
+    isSpeaking: false,
+    lookDir: 0.7,
+  });
+  drawConversationalCharacter(ctx, w * 0.82, h * 0.68, seatScale, t, {
+    name: "Mark",
+    fallbackKey: "mark",
+    isSpeaking: false,
+    lookDir: -0.7,
+  });
+
+  // Upward floating particle sparks
+  for (let i = 0; i < 22; i++) {
+    const px = ((i * 123 + t * 45) % w);
+    const py = (h - ((t * 55 + i * 85) % h));
+    ctx.fillStyle = i % 2 === 0 ? "rgba(56, 189, 248, 0.6)" : "rgba(168, 85, 247, 0.6)";
+    ctx.beginPath();
+    ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function drawSceneCharacter(ctx, cx, cy, scale, t, p) {
@@ -1294,11 +1848,48 @@ window.__renderAtTime = (t) => {
     return;
   }
 
+  const isTech = Boolean(CHARACTER_META && CHARACTER_META.is_tech_saas);
+  if (isTech) {
+    // Dynamic Scene-by-Scene Staging for SaaS Products
+    const shotType = String((CHARACTER_META && CHARACTER_META.shot_type) || "").toLowerCase();
+    const visDesc = String((CHARACTER_META && CHARACTER_META.desc) || "").toLowerCase();
+    const sceneIdx = Number(CHARACTER_META && CHARACTER_META.scene_index !== undefined ? CHARACTER_META.scene_index : 0);
+    const totalScenes = Number((CHARACTER_META && CHARACTER_META.total_scenes) || 2);
+
+    let shotMode = "wide_intro";
+    if (shotType.includes("close") || shotType.includes("medium") || visDesc.includes("close-up") || visDesc.includes("close up") || (totalScenes === 2 && sceneIdx === 1) || (totalScenes >= 3 && sceneIdx === 1)) {
+      shotMode = "speaker_spotlight";
+    } else if (shotType.includes("architecture") || visDesc.includes("architecture") || visDesc.includes("workflow") || (totalScenes >= 3 && sceneIdx === 2 && totalScenes > 3)) {
+      shotMode = "architecture_demo";
+    } else if (shotType.includes("cta") || shotType.includes("outro") || visDesc.includes("cta") || visDesc.includes("call to action") || (totalScenes >= 3 && sceneIdx === totalScenes - 1)) {
+      shotMode = "call_to_action";
+    } else {
+      shotMode = "wide_intro";
+    }
+
+    if (shotMode === "speaker_spotlight") {
+      drawSaaSSpeakerSpotlight(ctx, w, h, t, p);
+    } else if (shotMode === "architecture_demo") {
+      drawSaaSArchitectureDemo(ctx, w, h, t, p);
+    } else if (shotMode === "call_to_action") {
+      drawSaaSCallToAction(ctx, w, h, t, p);
+    } else {
+      drawSaaSSceneWideIntro(ctx, w, h, t, p, isTech);
+    }
+
+    const lt = document.getElementById("lowerThird");
+    if (lt && SHOW_HUD) {
+      lt.style.opacity = Math.min(1, p * 4.0);
+      document.getElementById("bar").style.width = `${(p * 100).toFixed(1)}%`;
+    }
+    return;
+  }
+
   if (CHARACTER_META && CHARACTER_META.is_interior) {
     drawOfficeConferenceBackground(ctx, w, h, t, p);
     const seatY = h * 0.65;
     const seatScale = (Math.min(w, h) / 680) * 1.15;
-    const speakerLow = ((CHARACTER_META.speaker || "") + "").toLowerCase();
+    const activeSpk = getActiveSpeakerAtTime(t);
     const leadName = CHARACTER_META.name || "Alex";
     const partnerName = CHARACTER_META.partner || "Maya";
     const thirdName = CHARACTER_META.third || "";
@@ -1307,37 +1898,38 @@ window.__renderAtTime = (t) => {
       drawConversationalCharacter(ctx, w * 0.25, seatY, seatScale * 0.94, t, {
         name: leadName,
         fallbackKey: "alex",
-        isSpeaking: speakerLow === leadName.toLowerCase(),
+        isSpeaking: activeSpk ? activeSpk.includes(leadName.toLowerCase()) : true,
         lookDir: 1,
         phase: 0,
       });
       drawConversationalCharacter(ctx, w * 0.50, seatY - 6, seatScale * 0.92, t, {
         name: thirdName,
         fallbackKey: "sam",
-        isSpeaking: speakerLow === thirdName.toLowerCase(),
-        lookDir: speakerLow === leadName.toLowerCase() ? -1 : 1,
+        isSpeaking: activeSpk ? activeSpk.includes(thirdName.toLowerCase()) : false,
+        lookDir: -1,
         phase: 1.7,
       });
       drawConversationalCharacter(ctx, w * 0.75, seatY, seatScale * 0.94, t, {
         name: partnerName,
         fallbackKey: "maya",
-        isSpeaking: speakerLow === partnerName.toLowerCase(),
+        isSpeaking: activeSpk ? activeSpk.includes(partnerName.toLowerCase()) : false,
         lookDir: -1,
         phase: 3.1,
       });
     } else if (partnerName) {
-      const speakerOnRight = (CHARACTER_META.speaking || "") === "partner";
+      const isLeadSpeaking = activeSpk ? activeSpk.includes(leadName.toLowerCase()) : true;
+      const isPartnerSpeaking = activeSpk ? activeSpk.includes(partnerName.toLowerCase()) : false;
       drawConversationalCharacter(ctx, w * 0.34, seatY, seatScale, t, {
         name: leadName,
         fallbackKey: "alex",
-        isSpeaking: !speakerOnRight,
+        isSpeaking: isLeadSpeaking,
         lookDir: 1,
         phase: 0,
       });
       drawConversationalCharacter(ctx, w * 0.66, seatY, seatScale, t, {
         name: partnerName,
         fallbackKey: "maya",
-        isSpeaking: speakerOnRight,
+        isSpeaking: isPartnerSpeaking,
         lookDir: -1,
         phase: 2.3,
       });
@@ -1345,12 +1937,12 @@ window.__renderAtTime = (t) => {
       drawConversationalCharacter(ctx, w * 0.50, seatY, seatScale * 1.05, t, {
         name: leadName,
         fallbackKey: "alex",
-        isSpeaking: true,
+        isSpeaking: Boolean(activeSpk),
         lookDir: 0,
         phase: 0,
       });
     }
-    drawConferenceTableForeground(ctx, w, h, t);
+    drawConferenceTableForeground(ctx, w, h, t, false);
     const lt = document.getElementById("lowerThird");
     if (lt && SHOW_HUD) {
       lt.style.opacity = Math.min(1, p * 4.0);
@@ -1550,8 +2142,10 @@ def render_hyperframes_scene(
     show_hud = not is_cinematic_narrative
 
     is_outdoor_walk = any(k in vis_desc_low for k in ("outdoor", "mountain", "park", "street", "walking outside", "forest"))
+    is_tech_saas = any(k in vis_desc_low or k in clean_title.lower() for k in ("saas", "tech", "software", "dashboard", "cloud", "api", "metric", "analytics", "telemetry", "code", "ai model", "platform", "architecture", "database", "server"))
     is_interior = (
         bool(partner_name)
+        or is_tech_saas
         or any(k in vis_desc_low for k in ("conference", "office", "layoff", "meeting", "boardroom", "desk", "table", "discussion", "dialogue", "interview", "break room", "two-shot", "three-shot"))
     ) and not is_outdoor_walk
     third_name = clean_markdown_inline(str(scene.get("third_character") or ""))
@@ -1566,9 +2160,15 @@ def render_hyperframes_scene(
         "speaker": speaker_name,
         "speaking": "partner" if partner_name and speaker_name.lower() == partner_name.lower() else "lead",
         "is_interior": is_interior,
+        "is_tech_saas": is_tech_saas,
         "shot_type": str(scene.get("shot_type") or ""),
         "has_speech": bool(clean_subline and clean_subline.lower() != "silence."),
         "scene_style": "cyberpunk" if ("cyberpunk" in vis_desc_low or "flying car" in vis_desc_low or theme == "cyberpunk") else "",
+        "scene_index": int(scene.get("scene_index", scene.get("order_index", 0))),
+        "total_scenes": int(scene.get("total_scenes", 2)),
+        "turns": scene.get("scene_turns_meta") or [],
+        "characters": scene.get("characters_roster") or [],
+        "title": clean_title,
     }
 
     body_class = "" if show_hud else "hide-hud"

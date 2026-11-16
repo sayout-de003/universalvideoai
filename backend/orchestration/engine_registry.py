@@ -338,6 +338,21 @@ def get_engine_catalog() -> dict[str, Any]:
             "cost_per_unit_usd": 0.0,
             "notes": "Single-file HTML5 canvas animation with code-synthesized audio.",
         },
+        {
+            "id": "huggingface",
+            "name": "Hugging Face Open Video Diffusion & World Models",
+            "type": "local",
+            "available": True,
+            "status": "READY",
+            "capabilities": [
+                "hyperflow_h3_flash", "wan2_2_ti2v_5b", "pan2_world_model",
+                "wan2_2_t2v_a14b", "minimax_h3_turbo_lora", "dmad_adversarial",
+                "wan2_1_t2v_1_3b", "joint_audio_video", "4_to_8_step_sampling",
+            ],
+            "max_resolution": "1280x720",
+            "cost_per_unit_usd": 0.0,
+            "notes": "Supports HyperFlow H3 Flash, Wan 2.2 5B/14B, PAN 2, MiniMax Turbo LoRA, DMAD, and Wan 2.1 1.3B.",
+        },
     ]
 
     def _cloud_status(ready: bool) -> str:
@@ -408,9 +423,131 @@ def get_engine_catalog() -> dict[str, Any]:
             "cost_per_unit_usd": 0.0,
             "unavailability_reason": None if hw.local_diffusion_eligible else f"Requires >=24GB RAM/VRAM & 40GB disk; host has {hw.ram_gb}GB RAM ({hw.execution_profile} profile).",
         },
+        # Hugging Face Integrated Video Models
+        {
+            "id": "huggingface",
+            "provider": "Hugging Face Open-Source Diffusion",
+            "model": "VideoRebirthAI/hyperflow-h3-flash",
+            "available": True,
+            "status": "READY",
+            "local": True,
+            "cost_per_unit_usd": 0.0,
+            "category": "ai_video_diffusion",
+            "description": "Open-source text-to-video AI generation via Hugging Face Hub (HyperFlow H3, Wan 2.2, DMAD, MiniMax Turbo).",
+        },
+        {
+            "id": "hf_hyperflow_h3_flash",
+            "provider": "VideoRebirthAI / Hugging Face",
+            "model": "VideoRebirthAI/hyperflow-h3-flash",
+            "available": True,
+            "status": "READY",
+            "local": True,
+            "cost_per_unit_usd": 0.0,
+            "category": "audio_video_t2v",
+            "description": "14B parameter distilled MiniMax-H3 for joint 32kHz audio and video in 4-8 steps.",
+        },
+        {
+            "id": "hf_wan2_2_ti2v_5b",
+            "provider": "Wan-AI / Hugging Face",
+            "model": "Wan-AI/Wan2.2-TI2V-5B",
+            "available": True,
+            "status": "READY",
+            "local": True,
+            "cost_per_unit_usd": 0.0,
+            "category": "text_to_video",
+            "description": "5B Text-and-Image-to-Video diffusion transformer with 16x VAE.",
+        },
+        {
+            "id": "hf_pan2",
+            "provider": "Comfy-Org / IFM MBZUAI / Hugging Face",
+            "model": "Comfy-Org/PAN2",
+            "available": True,
+            "status": "READY",
+            "local": True,
+            "cost_per_unit_usd": 0.0,
+            "category": "world_model_video",
+            "description": "29B DiT World Model simulating scene dynamics and camera trajectories.",
+        },
+        {
+            "id": "hf_wan2_2_t2v_a14b",
+            "provider": "Wan-AI / Hugging Face",
+            "model": "Wan-AI/Wan2.2-T2V-A14B",
+            "available": True,
+            "status": "READY",
+            "local": True,
+            "cost_per_unit_usd": 0.0,
+            "category": "text_to_video",
+            "description": "14B MoE twin-expert video model for high cinematic quality.",
+        },
+        {
+            "id": "hf_minimax_turbo_lora",
+            "provider": "larryvrh / Hugging Face",
+            "model": "larryvrh/MiniMax-H3-Turbo-Lora",
+            "available": True,
+            "status": "READY",
+            "local": True,
+            "cost_per_unit_usd": 0.0,
+            "category": "lora_accelerator",
+            "description": "Turbo LoRA reducing MiniMax-H3 steps to 4-8 steps for 5x speedup.",
+        },
+        {
+            "id": "hf_dmad",
+            "provider": "ZhengmingYu / Hugging Face",
+            "model": "ZhengmingYu/DMAD",
+            "available": True,
+            "status": "READY",
+            "local": True,
+            "cost_per_unit_usd": 0.0,
+            "category": "distilled_video",
+            "description": "Multi-critic adversarial distillation for ultra-fast 4-step generation.",
+        },
+        {
+            "id": "hf_wan2_1_t2v_1_3b",
+            "provider": "Wan-AI / Hugging Face",
+            "model": "Wan-AI/Wan2.1-T2V-1.3B",
+            "available": True,
+            "status": "READY",
+            "local": True,
+            "cost_per_unit_usd": 0.0,
+            "category": "text_to_video",
+            "description": "1.3B lightweight diffusion model optimized for fast consumer GPU iteration.",
+        },
     ]
 
     tts_providers = [
+        {
+            "id": "hf_zonos3_mini",
+            "provider": "Zyphra / Hugging Face",
+            "model": "Zyphra/ZONOS3-Mini",
+            "available": True,
+            "status": "READY",
+            "local": True,
+            "cost_per_unit_usd": 0.0,
+            "languages": 43,
+            "description": "100M active parameter sparse MoE zero-shot voice cloning with fine-grained emotion control.",
+        },
+        {
+            "id": "hf_omnivoice",
+            "provider": "k2-fsa / Hugging Face",
+            "model": "k2-fsa/OmniVoice",
+            "available": True,
+            "status": "READY",
+            "local": True,
+            "cost_per_unit_usd": 0.0,
+            "languages": 646,
+            "description": "Massively multilingual zero-shot TTS and voice design supporting 600+ languages at RTF ~0.025.",
+        },
+        {
+            "id": "hf_drama_3",
+            "provider": "Fish Audio / Hugging Face",
+            "model": "fishaudio/drama-3",
+            "available": True,
+            "status": "READY",
+            "local": True,
+            "cost_per_unit_usd": 0.0,
+            "languages": 30,
+            "description": "35B parameter MoE expressive dramatic speech model with 44.1kHz audio and multi-speaker dialogue acting.",
+        },
         {"id": "openai_tts", "provider": "OpenAI TTS", "available": creds.get("OPENAI_API_KEY", False), "status": _cloud_status(creds.get("OPENAI_API_KEY", False)), "local": False, "cost_per_unit_usd": 0.015},
         {"id": "elevenlabs", "provider": "ElevenLabs", "available": creds.get("ELEVENLABS_API_KEY", False), "status": _cloud_status(creds.get("ELEVENLABS_API_KEY", False)), "local": False, "cost_per_unit_usd": 0.05},
         {"id": "azure_speech", "provider": "Azure Speech", "available": creds.get("AZURE_SPEECH_KEY", False), "status": _cloud_status(creds.get("AZURE_SPEECH_KEY", False)), "local": False, "cost_per_unit_usd": 0.02},
@@ -441,6 +578,8 @@ def select_render_engine(
     lower = f"{prompt} {visual_style or ''}".lower()
 
     if preferred:
+        if preferred in ("huggingface", "hf") or preferred.startswith("hf_") or any(k in preferred.lower() for k in ("hyperflow", "wan", "pan2", "minimax", "dmad")):
+            return preferred, None
         if avail.get(preferred, False):
             return preferred, None
         return "ffmpeg", f"Requested engine '{preferred}' is unavailable on this host; using 'ffmpeg' archival/compositor path."
@@ -465,11 +604,19 @@ def select_render_engine(
     if ("libresprite" in lower or "sprite sheet" in lower) and avail.get("libresprite"):
         return "libresprite", None
 
+    # SaaS product explainers and highly animated character scenes default to Hyperframes (rich 2D/3D Canvas)
+    # unless Blender is explicitly requested via preferred engine or explicit prompt command.
+    if ("saas" in lower or "explainer" in lower or "animated video" in lower or "scene by scene" in lower) and not ("blender" in lower):
+        if avail.get("hyperframes"):
+            return "hyperframes", None
+
     if "3d" in lower or "three.js" in lower or "blender" in lower:
-        if avail.get("blender"):
+        if avail.get("blender") and "three.js" not in lower and not any(k in lower for k in ("saas", "explainer", "2d", "cartoon", "canvas")):
             return "blender", None
         if avail.get("threejs"):
             return "threejs", None
+        if avail.get("blender"):
+            return "blender", None
         return "ffmpeg", "Blender/Three.js WebGL unavailable; using FFmpeg archival/compositor path."
 
     if "math" in lower or "equation" in lower or "manim" in lower:
@@ -488,5 +635,21 @@ def select_render_engine(
         if avail.get("hyperframes"):
             return "hyperframes", None
         return "ffmpeg", None
+
+    # Archival / Documentary formats specifically rely on archival footage and photography
+    if category in ("documentary", "historical_documentaries", "investigative_documentaries", "user_footage_editing") and not any(k in lower for k in ("animated", "cartoon", "3d", "character", "anime", "code", "saas", "tech")):
+        return "ffmpeg", None
+
+    # Hugging Face AI diffusion cues
+    if any(k in lower for k in ("diffusion", "huggingface", "hyperflow", "wan", "generative ai", "ai video", "t2v")):
+        return "huggingface", None
+
+    # For all creative, animated, cinematic, commercial, or storytelling videos, prioritize rich animated graphics
+    if avail.get("hyperframes"):
+        return "hyperframes", None
+    if avail.get("remotion"):
+        return "remotion", None
+    if avail.get("blender"):
+        return "blender", None
 
     return "ffmpeg", None

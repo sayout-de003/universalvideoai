@@ -24,7 +24,7 @@ from backend.config import (
 from backend.db import get_conn, init_db
 from backend.integrations.openmontage_adapter import openmontage_adapter
 from backend.providers.image.router import image_provider_readiness
-from backend.providers.video.registry import video_provider_readiness
+from backend.providers.video.registry import huggingface_provider_readiness, video_provider_readiness
 from backend.integrations.openwhispr_adapter import openwhispr_adapter
 from backend.models import (
     DirectorChatRequest,
@@ -51,6 +51,18 @@ from backend.orchestration.director import (
     update_project_visual_style,
 )
 from backend.orchestration.engine_registry import get_engine_catalog
+from backend.services.huggingface_video_service import (
+    generate_video_with_huggingface_model,
+    get_model_spec,
+    list_all_huggingface_models,
+    prefetch_huggingface_model,
+)
+from backend.services.huggingface_voice_service import (
+    generate_speech_with_huggingface_voice,
+    get_voice_model_spec,
+    list_all_huggingface_voice_models,
+    prefetch_huggingface_voice_model,
+)
 from backend.orchestration.renderer import export_final_deliverable
 from backend.orchestration.timeline import (
     apply_timeline_op,
@@ -89,6 +101,7 @@ def health() -> dict[str, Any]:
         "hardware": hw.to_dict(),
         "credentials_configured": get_configured_credentials(),
         "video_providers": video_provider_readiness(),
+        "huggingface_video_providers": huggingface_provider_readiness(),
         "image_providers": image_provider_readiness(),
         "openmontage_available": openmontage_adapter.is_available(),
         "openwhispr": openwhispr_adapter.get_status(),
@@ -108,6 +121,119 @@ def engines() -> dict[str, Any]:
         "openmontage_configured_tools": om_tools.get("configured_tools", 0),
         "openmontage_pipelines": om_pipelines,
     }
+
+
+@app.get("/api/models/huggingface")
+def api_list_huggingface_models(fetch_stats: bool = False) -> dict[str, Any]:
+    models = list_all_huggingface_models(fetch_live_stats=fetch_stats)
+    return {
+        "ok": True,
+        "count": len(models),
+        "models": models,
+    }
+
+
+# --- Hugging Face Voice Endpoints (defined before video path wildcard) ---
+@app.get("/api/models/huggingface/voice")
+def api_list_huggingface_voice_models(fetch_stats: bool = False) -> dict[str, Any]:
+    models = list_all_huggingface_voice_models(fetch_live_stats=fetch_stats)
+    return {
+        "ok": True,
+        "count": len(models),
+        "models": models,
+    }
+
+
+@app.get("/api/models/huggingface/voice/{model_key:path}/status")
+def api_get_huggingface_voice_model_status(model_key: str) -> dict[str, Any]:
+    spec = get_voice_model_spec(model_key)
+    if not spec:
+        raise HTTPException(status_code=404, detail=f"Voice model '{model_key}' not found in registry")
+    models = list_all_huggingface_voice_models(fetch_live_stats=False)
+    matched = next((m for m in models if m["repo_id"] == spec["repo_id"]), None)
+    return {"ok": True, "model": matched or spec}
+
+
+@app.post("/api/models/huggingface/voice/{model_key:path}/prefetch")
+def api_prefetch_huggingface_voice_model(model_key: str) -> dict[str, Any]:
+    result = prefetch_huggingface_voice_model(model_key)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Prefetch failed"))
+    return result
+
+
+@app.post("/api/models/huggingface/voice/generate")
+def api_generate_huggingface_voice(payload: dict[str, Any]) -> dict[str, Any]:
+    model_key = payload.get("model_key") or payload.get("repo_id") or "Zyphra/ZONOS3-Mini"
+    text = payload.get("text", "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="Field 'text' is required")
+    voice_id = payload.get("voice_id", "default")
+    language = payload.get("language", "en")
+    speed = float(payload.get("speed", 1.0))
+    emotion = payload.get("emotion")
+
+    export_dir = PROJECTS_DIR / "hf_voice_generations"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    out_file = export_dir / f"voice_{uuid.uuid4().hex[:10]}.wav"
+
+    res = generate_speech_with_huggingface_voice(
+        model_key_or_repo=model_key,
+        text=text,
+        output_wav=out_file,
+        voice_id=voice_id,
+        language=language,
+        speed=speed,
+        emotion=emotion,
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=res.get("error", "Speech synthesis failed"))
+    return res
+
+
+# --- Hugging Face Video Endpoints ---
+@app.get("/api/models/huggingface/{model_key:path}/status")
+def api_get_huggingface_model_status(model_key: str) -> dict[str, Any]:
+    spec = get_model_spec(model_key)
+    if not spec:
+        raise HTTPException(status_code=404, detail=f"Model '{model_key}' not found in Hugging Face registry")
+    models = list_all_huggingface_models(fetch_live_stats=False)
+    matched = next((m for m in models if m["repo_id"] == spec["repo_id"]), None)
+    return {"ok": True, "model": matched or spec}
+
+
+@app.post("/api/models/huggingface/{model_key:path}/prefetch")
+def api_prefetch_huggingface_model(model_key: str) -> dict[str, Any]:
+    result = prefetch_huggingface_model(model_key)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Prefetch failed"))
+    return result
+
+
+@app.post("/api/models/huggingface/generate")
+def api_generate_huggingface_video(payload: dict[str, Any]) -> dict[str, Any]:
+    model_key = payload.get("model_key") or payload.get("repo_id") or "VideoRebirthAI/hyperflow-h3-flash"
+    prompt = payload.get("prompt", "").strip()
+    if not prompt:
+        raise HTTPException(status_code=422, detail="Field 'prompt' is required")
+    duration = float(payload.get("duration_sec", 4.0))
+    aspect = payload.get("aspect_ratio", "16:9")
+
+    # Destination in projects or cache
+    export_dir = PROJECTS_DIR / "hf_generations"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    out_file = export_dir / f"hf_{uuid.uuid4().hex[:10]}.mp4"
+
+    res = generate_video_with_huggingface_model(
+        model_key_or_repo=model_key,
+        prompt=prompt,
+        output_mp4=out_file,
+        duration_sec=duration,
+        aspect_ratio=aspect,
+    )
+    if not res.get("ok"):
+        raise HTTPException(status_code=500, detail=res.get("reason", "Generation failed"))
+    return res
 
 
 @app.get("/api/projects")

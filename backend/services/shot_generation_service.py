@@ -329,7 +329,7 @@ def generate_shot_for_scene(
     elif effective_engine == "opentoonz":
         effective_engine = "hyperframes"
         scene = {**scene, "visual_style": "cartoon_2d"}
-    elif str(scene.get("visual_style") or "").strip().lower() == "3d_stylized" and effective_engine not in ("blender", "threejs"):
+    elif str(scene.get("visual_style") or "").strip().lower() == "3d_stylized" and effective_engine not in ("blender", "threejs", "hyperframes"):
         effective_engine = "blender"
 
     # Enrich visual style and character continuity from project context if missing
@@ -460,6 +460,27 @@ def generate_shot_for_scene(
             attempts.append({"tier": tier, "status": res.get("status"), "reason": res.get("reason")})
             if res.get("ok"):
                 res["source_type"] = "hyperframes_html_css"
+                return res
+
+        elif tier == "huggingface":
+            from backend.services.huggingface_video_service import generate_video_with_huggingface_model
+            model_id = scene.get("huggingface_model") or scene.get("model") or effective_engine
+            if model_id == "huggingface":
+                model_id = "VideoRebirthAI/hyperflow-h3-flash"
+            res = generate_video_with_huggingface_model(
+                model_key_or_repo=str(model_id),
+                prompt=picture,
+                output_mp4=output_mp4,
+                duration_sec=duration,
+                width=width,
+                height=height,
+                fps=min(fps, 24),
+                aspect_ratio=aspect,
+            )
+            attempts.append({"tier": tier, "status": res.get("status"), "reason": res.get("reason")})
+            if res.get("ok"):
+                res["source_type"] = res.get("source_type", "huggingface_video")
+                res["picture_prompt"] = picture
                 return res
 
         elif tier == "cloud_image_kenburns":

@@ -80,6 +80,48 @@ export interface VideoFormatOption {
   structure?: string[];
 }
 
+export interface HuggingFaceModelInfo {
+  repo_id: string;
+  name: string;
+  display_name: string;
+  author: string;
+  base_model?: string;
+  category: string;
+  pipeline_tag?: string;
+  params_b?: number;
+  recommended_steps?: number;
+  step_range?: [number, number];
+  cfg?: number;
+  vram_recommended_gb?: number;
+  license?: string;
+  formats?: string[];
+  operations?: string[];
+  description?: string;
+  default_width?: number;
+  default_height?: number;
+  default_fps?: number;
+  cached?: boolean;
+  cache_size_mb?: number;
+  downloads?: number;
+  likes?: number;
+}
+
+export interface HuggingFaceVoiceModelInfo {
+  repo_id: string;
+  name: string;
+  display_name: string;
+  author: string;
+  category: string;
+  pipeline_tag?: string;
+  languages_count?: number;
+  sample_rate_hz?: number;
+  description?: string;
+  cached?: boolean;
+  cache_size_mb?: number;
+  downloads?: number;
+  likes?: number;
+}
+
 export interface ProjectDetail {
   project: ProjectSummary & { workspace_dir: string; subtitle_languages: string[]; metadata?: Record<string, unknown> };
   creative_brief?: Record<string, unknown>;

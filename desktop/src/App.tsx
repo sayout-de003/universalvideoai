@@ -154,7 +154,7 @@ export function App() {
               <ProjectHeader project={activeProject} tab={tab} onSelectTab={setTab} onBack={() => setTab("dashboard")} />
               {tab === "director" && <DirectorChatView project={activeProject} onSendMessage={async (msg, confirmed) => { const r = await studioClient.chatDirector(pid, msg, "text", confirmed); await refresh(); return r; }} />}
               {tab === "script_room" && <ScriptRoomView project={activeProject} onRefresh={refresh} onStartProduction={() => act(async () => { await studioClient.runProject(pid, false); await refresh(); setTab("backlot"); })} />}
-              {tab === "storyboard" && <StoryboardView project={activeProject} onRefresh={refresh} onRegenerateScene={(sceneId, visualStyle) => act(async () => { await studioClient.regenerateScene(pid, { scene_id: sceneId, ...(visualStyle ? { visual_style: visualStyle } : {}) }); await refresh(); }, "Scene regenerated. Your manual timeline edits were kept.")} />}
+              {tab === "storyboard" && <StoryboardView project={activeProject} onRefresh={refresh} onRegenerateScene={(sceneId, visualStyle, renderEngine) => act(async () => { await studioClient.regenerateScene(pid, { scene_id: sceneId, ...(visualStyle ? { visual_style: visualStyle } : {}), ...(renderEngine ? { render_engine: renderEngine } : {}) }); await refresh(); }, "Scene regenerated. Your manual timeline edits were kept.")} />}
               {tab === "hypit" && <HypitStudioView project={activeProject} onRefresh={refresh} />}
               {tab === "backlot" && (
                 <BacklotMonitorView

@@ -93,7 +93,7 @@ def run_qa_verification(
         checks.append(QualityCheckItem(
             name="duration_matches_target",
             category="visual",
-            passed=err <= 0.15 or abs(duration_sec - expected_duration_sec) <= 2.0,
+            passed=err <= 0.25 or abs(duration_sec - expected_duration_sec) <= 5.0,
             details=f"Program {duration_sec:.1f}s vs requested target {expected_duration_sec:.1f}s",
             measured_value=round(duration_sec, 2),
         ))

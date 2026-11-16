@@ -423,6 +423,8 @@ def _plan_hierarchy_and_bible(
 ) -> None:
     from backend.services.format_catalog import get_format_spec
     from backend.services.package_service import build_full_production_package
+
+    user_chose_voice = bool(voice_mode and voice_mode not in ("auto", ""))
     from backend.services.reference_service import build_reference_package
     from backend.services.research_service import run_project_research
     from backend.services.screenwriting_service import develop_and_write_screenplay
@@ -512,17 +514,25 @@ def _plan_hierarchy_and_bible(
             cast_specs = [{"name": n, "role": "protagonist" if i == 0 else f"cast_{i + 1}"} for i, n in enumerate(cast_names)]
 
         _voice_slots = ["character_1", "character_2", "character_3", "character_4"]
+        from backend.orchestration.audio_studio import resolve_neural_voice
         for cast_i, c_spec in enumerate(cast_specs):
             cast_name = str(c_spec.get("name") or f"Character {cast_i + 1}").strip()
             cast_id = char_id if cast_i == 0 else f"chr_{uuid.uuid4().hex[:8]}"
             character_ids[cast_name] = cast_id
             low_name = cast_name.lower()
-            voice_for_cast = (
-                "character_1" if low_name == "boss"
-                else ("character_2" if low_name == "employee"
-                else ("character_3" if low_name == "friend"
-                else _voice_slots[cast_i % len(_voice_slots)]))
-            )
+            if c_spec.get("voice_id"):
+                voice_for_cast = str(c_spec["voice_id"]).strip()
+            else:
+                _, cast_gender = resolve_neural_voice(cast_name)
+                if cast_gender == "female":
+                    voice_for_cast = "narrator_warm" if cast_i % 2 == 0 else "character_4"
+                else:
+                    voice_for_cast = (
+                        "character_1" if low_name in ("boss", "mark")
+                        else ("character_2" if low_name in ("employee", "alex")
+                        else ("character_3" if low_name in ("friend", "liam", "sam")
+                        else ("character_1" if cast_i % 2 == 0 else "character_2")))
+                    )
             wardrobe_str = ", ".join(c_spec.get("wardrobe") or []) or "Consistent signature wardrobe across all scenes"
             props_str = ", ".join(c_spec.get("props") or [])
             if props_str:
@@ -590,7 +600,17 @@ def _plan_hierarchy_and_bible(
                     dialogue_json = json.dumps(turns)
                 else:
                     dialogue_json = json.dumps([{"speaker": speaker_name or clean_char_name, "line": narration}] if narration else [])
-                scene_voice = sc_spec.get("voice_id") or ("narrator_deep" if scene_idx_global % 2 == 0 else "narrator_warm")
+                if user_chose_voice:
+                    if voice_mode == "dual":
+                        scene_voice = "narrator_deep" if scene_idx_global % 2 == 0 else "narrator_warm"
+                    elif voice_mode == "male":
+                        scene_voice = "narrator_deep"
+                    elif voice_mode == "female":
+                        scene_voice = "narrator_warm"
+                    else:
+                        scene_voice = voice_mode
+                else:
+                    scene_voice = sc_spec.get("voice_id") or ("narrator_deep" if scene_idx_global % 2 == 0 else "narrator_warm")
                 scene_trans = sc_spec.get("transition") or ("smoothleft" if s_i > 0 else "cut")
                 conn.execute(
                     """INSERT INTO scenes
@@ -689,6 +709,7 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
     from backend.orchestration.audio_studio import generate_sfx, generate_viseme_timeline
     from backend.services.blender_character_builder import (
         BREAKROOM_BLEND,
+        ensure_cast_and_set,
         ensure_office_cast_and_set,
         get_character_blend_path,
     )
@@ -712,12 +733,24 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
     cursor_sec = 0.0
     proj_chars = detail.get("characters") or []
     is_office_cast = any(str(c.get("name") or "").lower() in ("boss", "employee", "friend") for c in proj_chars)
-    office_assets_ready = False
-    if is_office_cast and (project.get("visual_style") == "3d_stylized" or project.get("render_engine") == "blender"):
-        cast_res = ensure_office_cast_and_set()
+    blender_needed = (
+        project.get("visual_style") == "3d_stylized"
+        or project.get("render_engine") == "blender"
+        or any(sc.get("render_engine") == "blender" for sc in scenes)
+    )
+    cast_assets_ready = False
+    active_env_blend = BREAKROOM_BLEND
+    if blender_needed:
+        if is_office_cast or not proj_chars:
+            cast_res = ensure_office_cast_and_set()
+            active_env_blend = BREAKROOM_BLEND
+        else:
+            env_choice = "tech_saas" if any(k in project.get("prompt", "").lower() for k in ("tech", "saas", "startup", "code", "ai", "platform")) else "office"
+            cast_res = ensure_cast_and_set(proj_chars, environment_type=env_choice)
+            active_env_blend = Path(cast_res.get("environment") or BREAKROOM_BLEND)
         if not cast_res.get("ok"):
             raise RuntimeError(f"Failed to prepare 3D character assets: {cast_res.get('reason')}")
-        office_assets_ready = True
+        cast_assets_ready = True
 
     for idx, sc in enumerate(scenes):
         with get_conn() as conn:
@@ -736,11 +769,7 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
             spoken_turns = []
 
         if not (resume and scene_mp4.exists() and scene_wav.exists() and sc.get("quality_status") == "generated"):
-            scene_voice = (
-                sc.get("provider")
-                if sc.get("provider") in ("narrator_deep", "narrator_warm", "character_1", "character_2", "character_3", "character_4", "male", "female")
-                else ("narrator_deep" if idx % 2 == 0 else "narrator_warm")
-            )
+            scene_voice = sc.get("provider") or ("narrator_deep" if idx % 2 == 0 else "narrator_warm")
             scene_engine = sc.get("render_engine") or project["render_engine"]
             scene_style = sc.get("visual_style") or project.get("visual_style") or "2d_illustrated"
             prod_mode_policy = project.get("production_mode_policy") or project.get("mode") or "hybrid"
@@ -766,7 +795,13 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
             )
 
             # Synthesize per-turn dialogue WAVs when dialogue_turns exist
+            char_voice_map: dict[str, str] = {}
+            for c in proj_chars:
+                if c.get("name") and c.get("voice_id"):
+                    char_voice_map[str(c["name"]).strip().lower()] = str(c["voice_id"]).strip()
+
             turn_wavs_for_scene: list[tuple[Path, float]] = []
+            scene_turns_meta: list[dict[str, Any]] = []
             local_offset = 0.25
             if spoken_turns and any(sanitize_spoken_voiceover(str(t.get("line") or ""), default="").strip() for t in spoken_turns):
                 for t_i, turn in enumerate(spoken_turns):
@@ -774,7 +809,15 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                     if not line_txt or line_txt.lower() in ("silence", "silence."):
                         continue
                     t_speaker = str(turn.get("speaker") or "Narrator").strip()
-                    t_voice = str(turn.get("voice_id") or scene_voice)
+                    t_speaker_low = t_speaker.lower()
+                    t_voice = str(turn.get("voice_id") or "").strip()
+                    if not t_voice or t_voice in ("auto", "default"):
+                        t_voice = char_voice_map.get(t_speaker_low) or ""
+                    if not t_voice:
+                        from backend.orchestration.audio_studio import resolve_neural_voice
+                        _, t_gender = resolve_neural_voice(t_speaker)
+                        t_voice = "narrator_warm" if t_gender == "female" else "character_1"
+
                     turn_wav = ws / "audio" / f"{sc['id']}_turn_{t_i}.wav"
                     t_tts = generate_tts(
                         line_txt,
@@ -788,7 +831,7 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                     t_dur = float(t_tts.get("duration_sec") or probe_duration(turn_wav))
                     turn_wavs_for_scene.append((turn_wav, local_offset))
                     narration_wavs.append((turn_wav, cursor_sec + local_offset))
-                    all_dialogue_tracks.append({
+                    turn_track_info = {
                         "scene_id": sc["id"],
                         "speaker": t_speaker,
                         "voice_used": t_tts.get("voice_used") or t_voice,
@@ -796,6 +839,15 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                         "wav_path": str(turn_wav),
                         "start_sec": round(cursor_sec + local_offset, 3),
                         "duration_sec": round(t_dur, 3),
+                    }
+                    all_dialogue_tracks.append(turn_track_info)
+                    scene_turns_meta.append({
+                        "speaker": t_speaker,
+                        "start_sec": round(local_offset, 3),
+                        "duration_sec": round(t_dur, 3),
+                        "end_sec": round(local_offset + t_dur, 3),
+                        "line": line_txt,
+                        "voice_used": t_tts.get("voice_used") or t_voice,
                     })
                     vis_frames = generate_viseme_timeline(
                         turn_wav, line_txt, speaker=t_speaker, offset_sec=local_offset, fps=int(project["fps"])
@@ -830,6 +882,14 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                         raise RuntimeError(f"TTS failed or fell back to silence for scene {sc['id']}: {tts_res.get('reason')}")
                     actual_audio_dur = float(tts_res.get("duration_sec") or sc["duration_sec"])
                     narration_wavs.append((scene_wav, cursor_sec))
+                    scene_turns_meta.append({
+                        "speaker": sc.get("speaker_name") or "Narrator",
+                        "start_sec": 0.25,
+                        "duration_sec": round(actual_audio_dur, 3),
+                        "end_sec": round(0.25 + actual_audio_dur, 3),
+                        "line": clean_narr,
+                        "voice_used": tts_res.get("voice_used") or scene_voice,
+                    })
 
             target_scene_dur = max(float(sc["duration_sec"]), actual_audio_dur + 0.25)
 
@@ -860,37 +920,66 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
 
             # Build multi-character 3D cast & environment spec for Blender
             blender_scene_extra: dict[str, Any] = {"lip_sync_frames": scene_lip_frames}
-            if office_assets_ready and scene_engine == "blender":
-                blender_scene_extra["environment_blend_path"] = str(BREAKROOM_BLEND)
-                blender_scene_extra["characters"] = [
-                    {
-                        "name": "Boss",
-                        "mesh_path": str(get_character_blend_path("boss")),
-                        "location": [-1.25, 0.0, 0.0],
-                        "rotation_z": -75.0,
-                        "seated": True,
-                        "expression": "serious",
-                        "gesture": "nervous_gesture" if ("nervous" in vis_low or idx == 0) else "idle_sit",
-                    },
-                    {
-                        "name": "Employee",
-                        "mesh_path": str(get_character_blend_path("employee")),
-                        "location": [0.0, 0.85, 0.0],
-                        "rotation_z": 0.0,
-                        "seated": True,
-                        "expression": "shocked" if ("spit" in vis_low or "shocked" in vis_low) else "serious",
-                        "gesture": "coffee_spit" if "spit" in vis_low else "idle_sit",
-                    },
-                    {
-                        "name": "Friend",
-                        "mesh_path": str(get_character_blend_path("friend")),
-                        "location": [1.25, 0.0, 0.0],
-                        "rotation_z": 75.0,
-                        "seated": True,
-                        "expression": "smirk",
-                        "gesture": "raise_hand" if ("raise" in vis_low and "hand" in vis_low) else "idle_sit",
-                    },
-                ]
+            if cast_assets_ready and scene_engine == "blender":
+                blender_scene_extra["environment_blend_path"] = str(active_env_blend)
+                if is_office_cast or not proj_chars:
+                    blender_scene_extra["characters"] = [
+                        {
+                            "name": "Boss",
+                            "mesh_path": str(get_character_blend_path("boss")),
+                            "location": [-1.25, 0.0, 0.0],
+                            "rotation_z": -75.0,
+                            "seated": True,
+                            "expression": "serious",
+                            "gesture": "nervous_gesture" if ("nervous" in vis_low or idx == 0) else "idle_sit",
+                        },
+                        {
+                            "name": "Employee",
+                            "mesh_path": str(get_character_blend_path("employee")),
+                            "location": [0.0, 0.85, 0.0],
+                            "rotation_z": 0.0,
+                            "seated": True,
+                            "expression": "shocked" if ("spit" in vis_low or "shocked" in vis_low) else "serious",
+                            "gesture": "coffee_spit" if "spit" in vis_low else "idle_sit",
+                        },
+                        {
+                            "name": "Friend",
+                            "mesh_path": str(get_character_blend_path("friend")),
+                            "location": [1.25, 0.0, 0.0],
+                            "rotation_z": 75.0,
+                            "seated": True,
+                            "expression": "smirk",
+                            "gesture": "raise_hand" if ("raise" in vis_low and "hand" in vis_low) else "idle_sit",
+                        },
+                    ]
+                else:
+                    target_roster = []
+                    coords = [(-1.25, 0.0, 0.0, -75.0), (0.0, 0.85, 0.0, 0.0), (1.25, 0.0, 0.0, 75.0)]
+                    for c_i, c_obj in enumerate(proj_chars[:3]):
+                        c_nm = str(c_obj.get("name") or f"Character_{c_i+1}")
+                        c_mesh_p = get_character_blend_path(c_nm)
+                        lx, ly, lz, rz = coords[c_i]
+                        is_speaking = bool(spoken_by and spoken_by.lower() in c_nm.lower())
+                        if "spit" in vis_low and is_speaking:
+                            c_gest, c_expr = "coffee_spit", "shocked"
+                        elif ("raise" in vis_low and "hand" in vis_low) and (is_speaking or c_i == 2):
+                            c_gest, c_expr = "raise_hand", "smirk"
+                        elif is_speaking:
+                            c_gest = "nervous_gesture" if ("nervous" in vis_low or "fidget" in vis_low) else "idle_sit"
+                            c_expr = "shocked" if ("shock" in vis_low or "shout" in vis_low) else "serious"
+                        else:
+                            c_gest = "idle_sit"
+                            c_expr = "smirk" if "smirk" in vis_low else ("shocked" if ("shock" in vis_low and c_i == 1) else "serious")
+                        target_roster.append({
+                            "name": c_nm,
+                            "mesh_path": str(c_mesh_p),
+                            "location": [lx, ly, lz],
+                            "rotation_z": rz,
+                            "seated": True,
+                            "expression": c_expr,
+                            "gesture": c_gest,
+                        })
+                    blender_scene_extra["characters"] = target_roster
 
             render_res = render_scene_clip(
                 {
@@ -902,6 +991,10 @@ def run_production(project_id: str, resume: bool = False, enforce_approval: bool
                     "lighting": shot.get("lighting") or sc.get("lighting"),
                     "shot_type": shot.get("shot_type") or sc.get("shot_type"),
                     "speaker_name": spoken_by or ("Male Lead Voice" if scene_voice in ("narrator_deep", "character_1", "male") else "Female Lead Voice"),
+                    "scene_turns_meta": scene_turns_meta,
+                    "characters_roster": proj_chars,
+                    "scene_index": idx,
+                    "total_scenes": len(scenes),
                 },
                 scene_mp4,
                 category=project["category"], resolution=project["resolution"], fps=int(project["fps"]),
